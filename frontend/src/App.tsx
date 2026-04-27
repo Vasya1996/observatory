@@ -18,16 +18,20 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     Promise.all([fetchIndex(), fetchState()])
       .then(([idx, st]) => {
+        if (cancelled) return;
         setIndex(idx.files, idx.edges);
         hydrate(st);
         setLoading(false);
       })
       .catch((e) => {
+        if (cancelled) return;
         setError(String(e));
         setLoading(false);
       });
+    return () => { cancelled = true; };
   }, [setIndex, hydrate]);
 
   if (loading) return <div className="center-overlay">Loading…</div>;

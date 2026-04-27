@@ -126,7 +126,6 @@ export function GraphCanvas({ files, edges }: Props) {
             "border-width": 1,
             "border-style": "dashed",
             "border-color": C.paperFaint,
-            "background-opacity": 0.35,
             opacity: 0.55,
           },
         },
