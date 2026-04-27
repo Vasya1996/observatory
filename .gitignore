@@ -13,6 +13,9 @@ node_modules/
 dist/
 build/
 .vite/
+*.tsbuildinfo
+# tsc-emitted files (we use Vite for builds; tsc is typecheck-only)
+frontend/src/**/*.js
 
 # Editors / OS
 .DS_Store
@@ -27,4 +30,6 @@ build/
 
 # Observatory runtime
 .observatory/
+.state.json
+.state.json.tmp
 *.log

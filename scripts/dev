@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Single-command launcher: backend (uvicorn :8765) + frontend (vite :5173).
+# Ctrl-C kills both children cleanly.
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BACKEND_DIR="$REPO_DIR/backend"
+FRONTEND_DIR="$REPO_DIR/frontend"
+
+# Bootstrap backend (uv-managed venv) on first run.
+if [[ ! -d "$BACKEND_DIR/.venv" ]]; then
+  echo "[observatory] bootstrapping backend venv with uv…"
+  (cd "$BACKEND_DIR" && uv sync)
+fi
+
+# Bootstrap frontend deps on first run.
+if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+  echo "[observatory] bootstrapping frontend deps with npm install…"
+  (cd "$FRONTEND_DIR" && npm install)
+fi
+
+echo "──────────────────────────────────────────────"
+echo " observatory"
+echo "  backend:  http://127.0.0.1:8765"
+echo "  frontend: http://127.0.0.1:5173"
+echo "──────────────────────────────────────────────"
+
+# Kick off children in the background.
+(cd "$BACKEND_DIR" && exec uv run uvicorn app.main:app \
+  --host 127.0.0.1 --port 8765 --reload --log-level info) &
+BACKEND_PID=$!
+
+(cd "$FRONTEND_DIR" && exec npm run dev -- --host 127.0.0.1 --port 5173) &
+FRONTEND_PID=$!
+
+cleanup() {
+  echo
+  echo "[observatory] shutting down…"
+  kill -TERM "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
+  wait "$BACKEND_PID" 2>/dev/null || true
+  wait "$FRONTEND_PID" 2>/dev/null || true
+}
+trap cleanup INT TERM
+
+wait -n "$BACKEND_PID" "$FRONTEND_PID" || true
+cleanup
