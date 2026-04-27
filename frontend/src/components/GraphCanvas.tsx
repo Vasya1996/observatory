@@ -237,6 +237,7 @@ export function GraphCanvas({ files, edges }: Props) {
         const p = node.position();
         return { node, pos: { x: p.x, y: p.y } };
       });
+      console.log("[obs] grab", grabbed.id(), "neighbours:", neighbourStarts.length, neighbourStarts.map(x => x.node.id()));
     });
     cy.on("drag", "node", (e) => {
       if (!dragOrigin) return;
@@ -244,6 +245,7 @@ export function GraphCanvas({ files, edges }: Props) {
       const cur = grabbed.position();
       const dx = (cur.x - dragOrigin.x) * FOLLOW;
       const dy = (cur.y - dragOrigin.y) * FOLLOW;
+      console.log("[obs] drag", grabbed.id(), "dx", dx.toFixed(1), "dy", dy.toFixed(1), "moving", neighbourStarts.length);
       for (const { node, pos } of neighbourStarts) {
         node.position({ x: pos.x + dx, y: pos.y + dy });
       }
