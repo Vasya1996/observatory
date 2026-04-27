@@ -250,12 +250,17 @@ export function GraphCanvas({ files, edges }: Props) {
     // re-grabbed later.
     cy.on("grab", "node", (e) => {
       const grabbed = e.target as cytoscape.NodeSingular;
-      cy.nodes(".pinned").not(grabbed).lock();
+      const neighbors = grabbed.neighborhood().nodes();
+      // Lock everything except the dragged node and its direct neighbours.
+      // This keeps every other node — pinned or not — exactly where it was,
+      // so the rest of the graph doesn't snap back to the original layout
+      // when cola spins up for this drag.
+      cy.nodes().not(grabbed).not(neighbors).lock();
       startLive();
     });
     cy.on("dragfree", "node", (e) => {
       stopLive();
-      cy.nodes(":locked").unlock();
+      cy.nodes().unlock();
       const n = e.target as cytoscape.NodeSingular;
       const pos = n.position();
       n.addClass("pinned");
