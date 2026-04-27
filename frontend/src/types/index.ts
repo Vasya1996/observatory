@@ -14,6 +14,8 @@ export type FileKind =
 
 export type EdgeKind = "import" | "mention";
 
+export type ViewKey = "map" | "sim" | "ed" | "ext";
+
 export interface Issue {
   severity: "info" | "warning" | "error";
   code: string;
@@ -48,4 +50,10 @@ export interface Edge {
 export interface IndexResponse {
   files: FileEntry[];
   edges: Edge[];
+}
+
+export interface UiState {
+  pins: Record<string, { x: number; y: number }>;
+  last_cwd: string | null;
+  last_view: ViewKey | null;
 }
