@@ -1,0 +1,26 @@
+# Observatory — public reverse proxy with HTTP Basic Auth.
+#
+# Listens on :9000 (any non-privileged port works without sudo). Proxies all
+# requests to Vite on 127.0.0.1:5173 — Vite then proxies /api to uvicorn on
+# 8765 server-side, so only one upstream is exposed.
+#
+# Username: vasya
+# Password: stored in ~/.observatory-password (bcrypt hash baked in below).
+# To rotate: regenerate the hash with `caddy hash-password --plaintext "<new>"`
+# and replace the line below.
+{
+	admin off
+	auto_https off
+}
+
+:9000 {
+	basic_auth {
+		vasya $2a$14$nP0fwMO82f/simcARci4seF3cvbUAQgboRhTgYVTU0WNQSk4QgZ5a
+	}
+	reverse_proxy 127.0.0.1:5173 {
+		# Preserve Vite HMR websockets — Caddy 2 forwards Upgrade/Connection
+		# automatically when reverse_proxy detects a websocket handshake.
+		header_up Host {host}
+		header_up X-Forwarded-Host {host}
+	}
+}
