@@ -22,34 +22,156 @@ const C = {
   plum: "#8a6ca0",
   lime: "#c7e36b",
   rust: "#cf6747",
+  ink: "#0b0b0e",
   ink2: "#111116",
 };
 
+// ---- inline SVG icons (URI-encoded, painted via background-image) ----
+const svg = (markup: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(markup)}`;
+
+// Scroll — used for skills (à la Claude desktop scroll glyph).
+const ICON_SCROLL = svg(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+   stroke="${C.amber}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 4 h12 a2 2 0 0 1 2 2 v12 a2 2 0 0 0 2 2 h-13 a2 2 0 0 1 -2 -2 V6 a2 2 0 0 1 1 -2 z"/>
+    <path d="M3 6 a2 2 0 0 1 2 -2"/>
+    <line x1="9" y1="9" x2="16" y2="9"/>
+    <line x1="9" y1="13" x2="16" y2="13"/>
+  </svg>`,
+);
+
+// Plug — used for plugins / mcp connectors.
+const ICON_PLUG = svg(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+   stroke="${C.amber}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 3 v5 M15 3 v5"/>
+    <path d="M7 8 h10 v3 a5 5 0 0 1 -10 0 z"/>
+    <path d="M12 16 v5"/>
+  </svg>`,
+);
+
+// Gear — used for settings.
+const ICON_GEAR = svg(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+   stroke="${C.amber}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M12 2 v3 M12 19 v3 M2 12 h3 M19 12 h3
+             M4.9 4.9 l2.1 2.1 M17 17 l2.1 2.1
+             M4.9 19.1 l2.1 -2.1 M17 7 l2.1 -2.1"/>
+  </svg>`,
+);
+
+// Lock — badge for automemory nodes (bottom-right).
+const ICON_LOCK = svg(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${C.ink2}"
+   stroke="${C.paperFaint}" stroke-width="2" stroke-linejoin="round">
+    <rect x="5" y="11" width="14" height="10" rx="2"/>
+    <path d="M8 11 V7 a4 4 0 0 1 8 0 V11" fill="none"/>
+  </svg>`,
+);
+
+// 3D pushpin — badge for pinned nodes (top-right).
+const ICON_PIN = svg(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+    <ellipse cx="12" cy="7" rx="6" ry="4" fill="${C.amber}" stroke="${C.ink}" stroke-width="1.2"/>
+    <ellipse cx="12" cy="7" rx="3" ry="2" fill="#ffd07a"/>
+    <path d="M12 11 L8 22 L12 18 L16 22 z" fill="${C.amber}" stroke="${C.ink}" stroke-width="1.2" stroke-linejoin="round"/>
+  </svg>`,
+);
+
+function primaryIcon(f: FileEntry): string | null {
+  if (f.kind === "skill") return ICON_SCROLL;
+  if (f.kind === "plugin_manifest" || f.kind === "plugin_registry") return ICON_PLUG;
+  if (f.kind === "mcp") return ICON_PLUG;
+  if (f.kind === "settings") return ICON_GEAR;
+  return null;
+}
+
 function nodeColor(f: FileEntry): string {
-  if (f.kind === "memory") {
-    const t = (f.frontmatter as { type?: string } | null)?.type;
-    if (t === "feedback")  return C.rust;
-    if (t === "project")   return C.plum;
-    if (t === "user")      return C.lime;
-    return C.teal; // reference + unknown
-  }
   switch (f.kind) {
     case "claude_md":       return C.paper;
-    case "rule":            return C.amber;
     case "memory_index":    return C.amber;
-    case "skill":           return C.plum;
-    case "plugin_manifest": return C.plum;
-    case "plugin_registry": return C.paperFaint;
-    case "mcp":             return C.lime;
-    case "settings":        return C.paperFaint;
-    case "automemory":      return C.paperFaint;
+    case "rule":            return C.amber;
+    case "memory":          return C.teal;
+    case "automemory":      return C.teal;
+    // Icon-shaped nodes — colour is the icon stroke; body becomes transparent.
+    case "skill":
+    case "plugin_manifest":
+    case "plugin_registry":
+    case "mcp":
+    case "settings":
+      return C.amber;
   }
 }
 
-function nodeSize(f: FileEntry): number {
-  if (f.kind === "memory_index") return 22;
-  if (f.kind === "claude_md")    return 18;
-  return 12;
+const SIZE_ENTRY = 22;
+const SIZE_MIN = 10;
+const SIZE_MAX = 20;
+
+function isEntryPoint(f: FileEntry): boolean {
+  return f.kind === "claude_md" || f.kind === "memory_index";
+}
+
+function nodeSize(f: FileEntry, indeg: number, maxIndeg: number): number {
+  if (isEntryPoint(f)) return SIZE_ENTRY;
+  if (maxIndeg === 0) return SIZE_MIN;
+  return SIZE_MIN + (SIZE_MAX - SIZE_MIN) * (indeg / maxIndeg);
+}
+
+interface BgState {
+  bgImages: string[];
+  bgPosX: string[];
+  bgPosY: string[];
+  bgW: string[];
+  bgH: string[];
+  bgFit: string[];
+  bgClip: string[];
+  bgOpacity: number; // body opacity — 0 hides the colored circle so the icon stands alone
+}
+
+function computeBg(f: FileEntry, pinned: boolean): BgState | null {
+  const primary = primaryIcon(f);
+  const hasLock = f.kind === "automemory";
+  if (!primary && !hasLock && !pinned) return null;
+
+  const images: string[] = [];
+  const posX: string[] = [];
+  const posY: string[] = [];
+  const w: string[] = [];
+  const h: string[] = [];
+  const fit: string[] = [];
+  const clip: string[] = [];
+
+  if (primary) {
+    images.push(primary);
+    posX.push("50%"); posY.push("50%");
+    w.push("100%");   h.push("100%");
+    fit.push("contain"); clip.push("none");
+  }
+  if (hasLock) {
+    images.push(ICON_LOCK);
+    posX.push("100%"); posY.push("100%");
+    w.push("48%");     h.push("48%");
+    fit.push("contain"); clip.push("none");
+  }
+  if (pinned) {
+    images.push(ICON_PIN);
+    posX.push("100%"); posY.push("0%");
+    w.push("55%");     h.push("55%");
+    fit.push("contain"); clip.push("none");
+  }
+
+  return {
+    bgImages: images,
+    bgPosX: posX,
+    bgPosY: posY,
+    bgW: w,
+    bgH: h,
+    bgFit: fit,
+    bgClip: clip,
+    bgOpacity: primary ? 0 : 1,
+  };
 }
 
 function basename(p: string): string {
@@ -74,17 +196,30 @@ export function GraphCanvas({ files, edges }: Props) {
 
     const initialPins = pinsRef.current;
 
+    // Indegree (= popularity) drives node size for non-entry-point files.
+    const indegMap = new Map<string, number>();
+    for (const e of edges) indegMap.set(e.target, (indegMap.get(e.target) ?? 0) + 1);
+    const maxIndeg = Math.max(0, ...indegMap.values());
+
+    const filesById = new Map(files.map((f) => [f.id, f]));
+
     const elements: cytoscape.ElementDefinition[] = [
-      ...files.map((f) => ({
-        data: {
-          id: f.id,
-          label: basename(f.path),
-          kind: f.kind,
-          color: nodeColor(f),
-          size: nodeSize(f),
-          locked: f.kind === "automemory" ? 1 : 0,
-        },
-      })),
+      ...files.map((f) => {
+        const indeg = indegMap.get(f.id) ?? 0;
+        const pinned = !!initialPins[f.id];
+        const bg = computeBg(f, pinned);
+        return {
+          data: {
+            id: f.id,
+            label: basename(f.path),
+            kind: f.kind,
+            color: nodeColor(f),
+            size: nodeSize(f, indeg, maxIndeg),
+            ...(bg ?? {}),
+          },
+          classes: pinned ? "pinned" : undefined,
+        };
+      }),
       ...edges.map((e) => ({
         data: {
           id: e.id,
@@ -115,16 +250,30 @@ export function GraphCanvas({ files, edges }: Props) {
             "text-outline-color": "#0b0b0e",
             "text-outline-width": 2,
             "border-width": 0,
-            "transition-property": "opacity, border-width, border-color",
-            "transition-duration": 120,
           },
         },
+        // Multi-image background — applied only when computeBg() seeded the
+        // bgImages data array (icon-shaped kinds, automemory lock, pinned pin).
+        // Cast: cytoscape's TS types disallow data() refs for some bg props,
+        // but the underlying renderer accepts them.
         {
-          selector: "node[locked = 1]",
+          selector: "node[bgImages]",
           style: {
-            "border-width": 1,
-            "border-style": "dashed",
-            "border-color": C.paperFaint,
+            "background-image": "data(bgImages)",
+            "background-position-x": "data(bgPosX)",
+            "background-position-y": "data(bgPosY)",
+            "background-width": "data(bgW)",
+            "background-height": "data(bgH)",
+            "background-fit": "data(bgFit)",
+            "background-clip": "data(bgClip)",
+            "background-image-containment": "over",
+            "background-opacity": "data(bgOpacity)",
+            "bounds-expansion": 8,
+          } as unknown as cytoscape.Css.Node,
+        },
+        {
+          selector: 'node[kind = "automemory"]',
+          style: {
             opacity: 0.55,
           },
         },
@@ -176,14 +325,8 @@ export function GraphCanvas({ files, edges }: Props) {
             width: 1.6,
           },
         },
-        {
-          selector: "node.pinned",
-          style: {
-            "border-width": 2,
-            "border-color": C.amber,
-            "border-style": "solid",
-          },
-        },
+        // .pinned visualisation is now the pin badge baked into bgImages —
+        // no border. `:selected` still shows a paper-coloured outline.
         {
           selector: "node:selected",
           style: {
@@ -266,6 +409,12 @@ export function GraphCanvas({ files, edges }: Props) {
       const n = e.target as cytoscape.NodeSingular;
       const pos = n.position();
       n.addClass("pinned");
+      // Repaint the node with the pin badge layered on its background.
+      const f = filesById.get(n.id());
+      if (f) {
+        const bg = computeBg(f, true);
+        if (bg) for (const [k, v] of Object.entries(bg)) n.data(k, v);
+      }
       useStore.getState().setPin(n.id(), { x: pos.x, y: pos.y });
     });
 
