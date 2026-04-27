@@ -24,8 +24,6 @@ const C = {
   rust: "#cf6747",
   ink: "#0b0b0e",
   ink2: "#111116",
-  ink3: "#16161d",
-  line: "#23232c",
 };
 
 // ---- inline SVG icons (URI-encoded, painted via background-image) ----
@@ -43,11 +41,10 @@ const ICON_SCROLL = svg(
   </svg>`,
 );
 
-// Plug — used for plugins / mcp connectors. Teal so it doesn't compete
-// with rules/entry points for the amber slot.
+// Plug — used for plugins / mcp connectors.
 const ICON_PLUG = svg(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-   stroke="${C.teal}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+   stroke="${C.amber}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
     <path d="M9 3 v5 M15 3 v5"/>
     <path d="M7 8 h10 v3 a5 5 0 0 1 -10 0 z"/>
     <path d="M12 16 v5"/>
@@ -57,7 +54,7 @@ const ICON_PLUG = svg(
 // Gear — used for settings.
 const ICON_GEAR = svg(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-   stroke="${C.amber}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+   stroke="${C.amber}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="3"/>
     <path d="M12 2 v3 M12 19 v3 M2 12 h3 M19 12 h3
              M4.9 4.9 l2.1 2.1 M17 17 l2.1 2.1
@@ -65,30 +62,21 @@ const ICON_GEAR = svg(
   </svg>`,
 );
 
-// Lock — enamel-style badge for automemory nodes (bottom-right corner).
+// Lock — badge for automemory nodes (bottom-right).
 const ICON_LOCK = svg(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-    <rect x="4.5" y="11" width="15" height="10.5" rx="2.5"
-          fill="${C.ink2}" stroke="${C.amber}" stroke-width="1.6" opacity="0.92"/>
-    <path d="M8 11 V7 a4 4 0 0 1 8 0 V11"
-          fill="none" stroke="${C.amber}" stroke-width="1.6" stroke-linecap="round"/>
-    <circle cx="12" cy="16" r="1.2" fill="${C.amber}"/>
-    <line x1="12" y1="16" x2="12" y2="18.5"
-          stroke="${C.amber}" stroke-width="1.4" stroke-linecap="round"/>
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${C.ink2}"
+   stroke="${C.paperFaint}" stroke-width="2" stroke-linejoin="round">
+    <rect x="5" y="11" width="14" height="10" rx="2"/>
+    <path d="M8 11 V7 a4 4 0 0 1 8 0 V11" fill="none"/>
   </svg>`,
 );
 
-// 3D pushpin — needle + ground-shadow + bevel arc give the depth illusion.
+// 3D pushpin — badge for pinned nodes (top-right).
 const ICON_PIN = svg(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-    <ellipse cx="12.5" cy="22" rx="3.5" ry="0.8" fill="${C.ink}" opacity="0.55"/>
-    <line x1="12" y1="14" x2="12" y2="22"
-          stroke="${C.ink}" stroke-width="1.4" stroke-linecap="round"/>
-    <ellipse cx="12" cy="9" rx="6.5" ry="5"
-             fill="${C.amber}" stroke="${C.ink}" stroke-width="1.3"/>
-    <ellipse cx="10" cy="7.5" rx="2.2" ry="1.4" fill="#ffd07a" opacity="0.95"/>
-    <path d="M 5.6 9 a 6.5 5 0 0 0 12.8 0"
-          fill="none" stroke="#a4661a" stroke-width="1.1" opacity="0.7"/>
+    <ellipse cx="12" cy="7" rx="6" ry="4" fill="${C.amber}" stroke="${C.ink}" stroke-width="1.2"/>
+    <ellipse cx="12" cy="7" rx="3" ry="2" fill="#ffd07a"/>
+    <path d="M12 11 L8 22 L12 18 L16 22 z" fill="${C.amber}" stroke="${C.ink}" stroke-width="1.2" stroke-linejoin="round"/>
   </svg>`,
 );
 
@@ -107,37 +95,26 @@ function nodeColor(f: FileEntry): string {
     case "rule":            return C.amber;
     case "memory":          return C.teal;
     case "automemory":      return C.teal;
+    // Icon-shaped nodes — colour is the icon stroke; body becomes transparent.
     case "skill":
-    case "settings":
-      return C.amber;
     case "plugin_manifest":
     case "plugin_registry":
     case "mcp":
-      return C.teal;
+    case "settings":
+      return C.amber;
   }
 }
 
-const SIZE_ENTRY = 36;
-const SIZE_ICON  = 32;
-const SIZE_MIN   = 20;
-const SIZE_MAX   = 32;
+const SIZE_ENTRY = 22;
+const SIZE_MIN = 10;
+const SIZE_MAX = 20;
 
 function isEntryPoint(f: FileEntry): boolean {
   return f.kind === "claude_md" || f.kind === "memory_index";
 }
-function isIconShaped(f: FileEntry): boolean {
-  return (
-    f.kind === "skill" ||
-    f.kind === "plugin_manifest" ||
-    f.kind === "plugin_registry" ||
-    f.kind === "mcp" ||
-    f.kind === "settings"
-  );
-}
 
 function nodeSize(f: FileEntry, indeg: number, maxIndeg: number): number {
   if (isEntryPoint(f)) return SIZE_ENTRY;
-  if (isIconShaped(f)) return SIZE_ICON;
   if (maxIndeg === 0) return SIZE_MIN;
   return SIZE_MIN + (SIZE_MAX - SIZE_MIN) * (indeg / maxIndeg);
 }
@@ -181,7 +158,7 @@ function computeBg(f: FileEntry, pinned: boolean): BgState | null {
   if (pinned) {
     images.push(ICON_PIN);
     posX.push("100%"); posY.push("0%");
-    w.push("60%");     h.push("60%");
+    w.push("55%");     h.push("55%");
     fit.push("contain"); clip.push("none");
   }
 
@@ -265,35 +242,15 @@ export function GraphCanvas({ files, edges }: Props) {
             width: "data(size)",
             height: "data(size)",
             label: "data(label)",
-
-            // Label as a chip pinned to the bottom-right of the node:
-            // text-margin-x (6) + text-background-padding (7) puts the chip's
-            // left edge ~1px inside the circle, slightly overlapping it.
-            "text-halign": "right",
-            "text-valign": "center",
-            "text-margin-x": 6,
-            "text-margin-y": 5,
-
             "font-family": '"JetBrains Mono", monospace',
-            "font-size": 11,
-            "font-weight": 400,
-            color: C.paper,
-
-            "text-background-color": "#16161d",
-            "text-background-opacity": 0.78,
-            "text-background-padding": "7px",
-            "text-background-shape": "roundrectangle",
-
-            "text-border-color": C.line,
-            "text-border-width": 1,
-            "text-border-opacity": 0.55,
-
-            "text-max-width": 200,
-            "text-wrap": "ellipsis",
-            "text-overflow-wrap": "anywhere",
-
+            "font-size": "9px",
+            color: C.paperDim,
+            "text-valign": "bottom",
+            "text-margin-y": 5,
+            "text-outline-color": "#0b0b0e",
+            "text-outline-width": 2,
             "border-width": 0,
-          } as unknown as cytoscape.Css.Node,
+          },
         },
         // Multi-image background — applied only when computeBg() seeded the
         // bgImages data array (icon-shaped kinds, automemory lock, pinned pin).
@@ -318,27 +275,6 @@ export function GraphCanvas({ files, edges }: Props) {
           selector: 'node[kind = "automemory"]',
           style: {
             opacity: 0.55,
-          },
-        },
-        // Hairline amber ring on entry points.
-        {
-          selector: 'node[kind = "claude_md"], node[kind = "memory_index"]',
-          style: {
-            "border-width": 1.5,
-            "border-style": "solid",
-            "border-color": C.amber,
-            "border-opacity": 0.7,
-          },
-        },
-        // Chip promotion on the hovered node itself.
-        {
-          selector: "node.hover-self",
-          style: {
-            "text-background-opacity": 0.95,
-            "text-background-color": "#1a1a22",
-            "text-border-opacity": 1,
-            "text-border-color": C.amber,
-            color: C.amber,
           },
         },
         {
@@ -438,10 +374,9 @@ export function GraphCanvas({ files, edges }: Props) {
       cy.elements().difference(related.union(inc)).addClass("dim");
       out.addClass("hover-out");
       into.addClass("hover-in");
-      n.addClass("hover-self");
     });
     cy.on("mouseout", "node", () => {
-      cy.elements().removeClass("dim hover-out hover-in hover-self");
+      cy.elements().removeClass("dim hover-out hover-in");
     });
 
     // ----- drag to pin (locked design #15) -----
