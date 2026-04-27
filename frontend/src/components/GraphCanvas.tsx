@@ -129,25 +129,23 @@ export function GraphCanvas({ files, edges }: Props) {
           },
         },
         {
+          // Base: colour encodes type, line-style is always solid, no arrow.
+          // Direction (solid out / dashed in) and the arrow appear only on
+          // hover via .hover-out / .hover-in classes.
           selector: 'edge[kind = "import"]',
           style: {
             "line-color": C.amber,
-            width: 1.6,
             "target-arrow-color": C.amber,
-            "target-arrow-shape": "triangle",
-            "arrow-scale": 0.9,
+            width: 1.6,
             "curve-style": "bezier",
             opacity: 0.85,
-            // TODO step 2+: animated dots along import edges (locked design #13).
-            // Cytoscape has no native marker-along-path; needs an SVG overlay.
-            // Solid line + arrowhead carries direction adequately for v0.
           },
         },
         {
           selector: 'edge[kind = "mention"]',
           style: {
             "line-color": C.teal,
-            "line-style": "dashed",
+            "target-arrow-color": C.teal,
             width: 0.9,
             "curve-style": "bezier",
             opacity: 0.55,
@@ -160,11 +158,23 @@ export function GraphCanvas({ files, edges }: Props) {
         },
         {
           selector: "edge.hover-out",
-          style: { "line-color": C.amber, "target-arrow-color": C.amber, opacity: 1, width: 2 },
+          style: {
+            "line-style": "solid",
+            "target-arrow-shape": "triangle",
+            "arrow-scale": 0.9,
+            opacity: 1,
+            width: 2,
+          },
         },
         {
           selector: "edge.hover-in",
-          style: { "line-color": C.teal, opacity: 1, width: 1.6 },
+          style: {
+            "line-style": "dashed",
+            "target-arrow-shape": "triangle",
+            "arrow-scale": 0.9,
+            opacity: 1,
+            width: 1.6,
+          },
         },
         {
           selector: "node.pinned",
@@ -239,12 +249,6 @@ export function GraphCanvas({ files, edges }: Props) {
         const p = node.position();
         return { node, pos: { x: p.x, y: p.y } };
       });
-      console.log(
-        "[obs] grab", grabbed.id(),
-        "edges:", grabbed.connectedEdges().length,
-        "out:", out.length, "inc:", inc.length,
-        "reactive:", neighbourStarts.length,
-      );
     });
     cy.on("drag", "node", (e) => {
       if (!dragOrigin) return;
@@ -252,7 +256,6 @@ export function GraphCanvas({ files, edges }: Props) {
       const cur = grabbed.position();
       const dx = (cur.x - dragOrigin.x) * FOLLOW;
       const dy = (cur.y - dragOrigin.y) * FOLLOW;
-      console.log("[obs] drag", grabbed.id(), "dx", dx.toFixed(1), "dy", dy.toFixed(1), "moving", neighbourStarts.length);
       for (const { node, pos } of neighbourStarts) {
         node.position({ x: pos.x + dx, y: pos.y + dy });
       }
