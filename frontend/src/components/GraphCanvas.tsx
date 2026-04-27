@@ -231,13 +231,20 @@ export function GraphCanvas({ files, edges }: Props) {
       const grabbed = e.target as cytoscape.NodeSingular;
       const start = grabbed.position();
       dragOrigin = { x: start.x, y: start.y };
-      const reactive = grabbed.neighborhood().nodes().not(".pinned");
+      const out = grabbed.outgoers("node");
+      const inc = grabbed.incomers("node");
+      const reactive = out.union(inc).not(grabbed).not(".pinned");
       neighbourStarts = reactive.toArray().map((n) => {
         const node = n as cytoscape.NodeSingular;
         const p = node.position();
         return { node, pos: { x: p.x, y: p.y } };
       });
-      console.log("[obs] grab", grabbed.id(), "neighbours:", neighbourStarts.length, neighbourStarts.map(x => x.node.id()));
+      console.log(
+        "[obs] grab", grabbed.id(),
+        "edges:", grabbed.connectedEdges().length,
+        "out:", out.length, "inc:", inc.length,
+        "reactive:", neighbourStarts.length,
+      );
     });
     cy.on("drag", "node", (e) => {
       if (!dragOrigin) return;
