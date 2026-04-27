@@ -202,31 +202,14 @@ export function GraphCanvas({ files, edges }: Props) {
       if (n.nonempty()) n.position(pos).addClass("pinned");
     }
 
-    // ----- live simulation, only while dragging -----
-    // Running cola continuously caused two problems: every node drifted in
-    // response to every other (global force field) and released nodes were
-    // pulled back into the cluster. The fix is to only animate while the
-    // user is actively holding a node — then freeze.
-    let liveLayout: cytoscape.Layouts | null = null;
-    const startLive = () => {
-      if (liveLayout) liveLayout.stop();
-      liveLayout = cy.layout({
-        name: "cola",
-        animate: true,
-        infinite: true,
-        fit: false,
-        randomize: false,
-        nodeSpacing: 16,
-        edgeLength: 110,
-      } as cytoscape.LayoutOptions);
-      liveLayout.run();
-    };
-    const stopLive = () => {
-      if (liveLayout) {
-        liveLayout.stop();
-        liveLayout = null;
-      }
-    };
+    // ----- drag-time neighbour pull -----
+    // Cola's constraint solver runs slower than mouse-move events fire, so
+    // a continuous live layout never visually catches up. Instead, we move
+    // each unpinned direct neighbour by a fixed fraction of the dragged
+    // node's delta on every drag event. Deterministic and snappy.
+    const FOLLOW = 0.65; // how much of the drag the neighbours absorb
+    let dragOrigin: { x: number; y: number } | null = null;
+    let neighbourStarts: { node: cytoscape.NodeSingular; pos: { x: number; y: number } }[] = [];
 
     // ----- hover behavior -----
     cy.on("mouseover", "node", (e) => {
@@ -244,22 +227,30 @@ export function GraphCanvas({ files, edges }: Props) {
     });
 
     // ----- drag to pin (locked design #15) -----
-    // Cola only treats node.locked() as fixed. To keep already-pinned nodes
-    // anchored while a different node is dragged, we lock them at grab time
-    // and unlock everyone again at dragfree — so any pin can still be
-    // re-grabbed later.
     cy.on("grab", "node", (e) => {
       const grabbed = e.target as cytoscape.NodeSingular;
-      // Free to move during this drag: the grabbed node plus its direct
-      // neighbours that aren't already pinned. Everything else is locked
-      // so cola can't tug it toward the global force equilibrium.
+      const start = grabbed.position();
+      dragOrigin = { x: start.x, y: start.y };
       const reactive = grabbed.neighborhood().nodes().not(".pinned");
-      cy.nodes().not(grabbed).not(reactive).lock();
-      startLive();
+      neighbourStarts = reactive.toArray().map((n) => {
+        const node = n as cytoscape.NodeSingular;
+        const p = node.position();
+        return { node, pos: { x: p.x, y: p.y } };
+      });
+    });
+    cy.on("drag", "node", (e) => {
+      if (!dragOrigin) return;
+      const grabbed = e.target as cytoscape.NodeSingular;
+      const cur = grabbed.position();
+      const dx = (cur.x - dragOrigin.x) * FOLLOW;
+      const dy = (cur.y - dragOrigin.y) * FOLLOW;
+      for (const { node, pos } of neighbourStarts) {
+        node.position({ x: pos.x + dx, y: pos.y + dy });
+      }
     });
     cy.on("dragfree", "node", (e) => {
-      stopLive();
-      cy.nodes().unlock();
+      dragOrigin = null;
+      neighbourStarts = [];
       const n = e.target as cytoscape.NodeSingular;
       const pos = n.position();
       n.addClass("pinned");
@@ -275,7 +266,6 @@ export function GraphCanvas({ files, edges }: Props) {
 
     cyRef.current = cy;
     return () => {
-      stopLive();
       cy.destroy();
       cyRef.current = null;
     };
