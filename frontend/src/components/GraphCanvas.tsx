@@ -182,38 +182,51 @@ export function GraphCanvas({ files, edges }: Props) {
           },
         },
       ],
+      // Initial layout: a one-shot cola run to settle node positions.
+      // Live simulation is only spun up while the user is dragging.
       layout: {
         name: "cola",
-        animate: true,
-        infinite: true,
+        animate: false,
+        infinite: false,
         fit: false,
         nodeSpacing: 16,
         edgeLength: 110,
         randomize: Object.keys(initialPins).length === 0,
-        // Cola listens to grab/dragfree on its own — neighbours follow the
-        // dragged node live, and a released node stays where it landed.
+        maxSimulationTime: 1500,
       } as cytoscape.LayoutOptions,
     });
 
-    // Cola pinning helpers — cola respects `node.scratch('cola').fixed`
-    // during the live simulation without disabling cytoscape's drag.
-    const colaPin = (n: cytoscape.NodeSingular) => {
-      n.scratch("cola", { ...(n.scratch("cola") || {}), fixed: true });
-      n.addClass("pinned");
-    };
-    const colaUnpin = (n: cytoscape.NodeSingular) => {
-      n.scratch("cola", { ...(n.scratch("cola") || {}), fixed: false });
-    };
-
-    // Snap initially-persisted pins to their saved positions and mark fixed
-    // before the simulation settles so cola doesn't drag them back.
+    // Snap initially-persisted pins to their saved positions.
     for (const [id, pos] of Object.entries(initialPins)) {
       const n = cy.getElementById(id);
-      if (n.nonempty()) {
-        n.position(pos);
-        colaPin(n);
-      }
+      if (n.nonempty()) n.position(pos).addClass("pinned");
     }
+
+    // ----- live simulation, only while dragging -----
+    // Running cola continuously caused two problems: every node drifted in
+    // response to every other (global force field) and released nodes were
+    // pulled back into the cluster. The fix is to only animate while the
+    // user is actively holding a node — then freeze.
+    let liveLayout: cytoscape.Layouts | null = null;
+    const startLive = () => {
+      if (liveLayout) liveLayout.stop();
+      liveLayout = cy.layout({
+        name: "cola",
+        animate: true,
+        infinite: true,
+        fit: false,
+        randomize: false,
+        nodeSpacing: 16,
+        edgeLength: 110,
+      } as cytoscape.LayoutOptions);
+      liveLayout.run();
+    };
+    const stopLive = () => {
+      if (liveLayout) {
+        liveLayout.stop();
+        liveLayout = null;
+      }
+    };
 
     // ----- hover behavior -----
     cy.on("mouseover", "node", (e) => {
@@ -231,15 +244,16 @@ export function GraphCanvas({ files, edges }: Props) {
     });
 
     // ----- drag to pin (locked design #15) -----
-    // On grab, unpin so cola lets the user move the node. On dragfree, pin
-    // it back at the new position so cola won't pull it into the cluster.
-    cy.on("grab", "node", (e) => {
-      colaUnpin(e.target as cytoscape.NodeSingular);
+    // grab → fire up cola so neighbours react to the drag.
+    // dragfree → freeze: stop cola, mark pinned, persist position.
+    cy.on("grab", "node", () => {
+      startLive();
     });
     cy.on("dragfree", "node", (e) => {
+      stopLive();
       const n = e.target as cytoscape.NodeSingular;
       const pos = n.position();
-      colaPin(n);
+      n.addClass("pinned");
       useStore.getState().setPin(n.id(), { x: pos.x, y: pos.y });
     });
 
@@ -252,6 +266,7 @@ export function GraphCanvas({ files, edges }: Props) {
 
     cyRef.current = cy;
     return () => {
+      stopLive();
       cy.destroy();
       cyRef.current = null;
     };
