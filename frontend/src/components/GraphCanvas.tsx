@@ -84,7 +84,6 @@ export function GraphCanvas({ files, edges }: Props) {
           size: nodeSize(f),
           locked: f.kind === "automemory" ? 1 : 0,
         },
-        position: initialPins[f.id], // undefined → fcose places it
       })),
       ...edges.map((e) => ({
         data: {
@@ -186,23 +185,18 @@ export function GraphCanvas({ files, edges }: Props) {
       layout: {
         name: "fcose",
         animate: false,
-        randomize: Object.keys(initialPins).length === 0,
+        randomize: true,
         nodeRepulsion: 6500,
         idealEdgeLength: 90,
-        // Honor pinned positions if any are present.
-        fixedNodeConstraint: Object.entries(initialPins).map(([id, p]) => ({
-          nodeId: id,
-          position: p,
-        })),
       } as cytoscape.LayoutOptions,
     });
 
-    // Mark initially-pinned nodes (visual only — fcose already honored their
-    // positions via fixedNodeConstraint, and we want the user to be able to
-    // pick them up again).
-    for (const id of Object.keys(initialPins)) {
+    // Snap pinned nodes to their saved positions after layout.
+    // (Earlier we used fcose's fixedNodeConstraint, but it left edge endpoints
+    // out of sync with nodes during subsequent drags.)
+    for (const [id, pos] of Object.entries(initialPins)) {
       const n = cy.getElementById(id);
-      if (n.nonempty()) n.addClass("pinned");
+      if (n.nonempty()) n.position(pos).addClass("pinned");
     }
 
     // ----- hover behavior -----
