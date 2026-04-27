@@ -195,10 +195,24 @@ export function GraphCanvas({ files, edges }: Props) {
       } as cytoscape.LayoutOptions,
     });
 
-    // Snap pinned nodes to their saved positions before the simulation settles.
+    // Cola pinning helpers — cola respects `node.scratch('cola').fixed`
+    // during the live simulation without disabling cytoscape's drag.
+    const colaPin = (n: cytoscape.NodeSingular) => {
+      n.scratch("cola", { ...(n.scratch("cola") || {}), fixed: true });
+      n.addClass("pinned");
+    };
+    const colaUnpin = (n: cytoscape.NodeSingular) => {
+      n.scratch("cola", { ...(n.scratch("cola") || {}), fixed: false });
+    };
+
+    // Snap initially-persisted pins to their saved positions and mark fixed
+    // before the simulation settles so cola doesn't drag them back.
     for (const [id, pos] of Object.entries(initialPins)) {
       const n = cy.getElementById(id);
-      if (n.nonempty()) n.position(pos).addClass("pinned");
+      if (n.nonempty()) {
+        n.position(pos);
+        colaPin(n);
+      }
     }
 
     // ----- hover behavior -----
@@ -217,12 +231,15 @@ export function GraphCanvas({ files, edges }: Props) {
     });
 
     // ----- drag to pin (locked design #15) -----
-    // Don't lock the node — that would prevent re-dragging and freeze the
-    // edges connected to it. Just persist the position and mark it visually.
+    // On grab, unpin so cola lets the user move the node. On dragfree, pin
+    // it back at the new position so cola won't pull it into the cluster.
+    cy.on("grab", "node", (e) => {
+      colaUnpin(e.target as cytoscape.NodeSingular);
+    });
     cy.on("dragfree", "node", (e) => {
       const n = e.target as cytoscape.NodeSingular;
       const pos = n.position();
-      n.addClass("pinned");
+      colaPin(n);
       useStore.getState().setPin(n.id(), { x: pos.x, y: pos.y });
     });
 
