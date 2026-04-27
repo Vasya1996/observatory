@@ -244,13 +244,18 @@ export function GraphCanvas({ files, edges }: Props) {
     });
 
     // ----- drag to pin (locked design #15) -----
-    // grab → fire up cola so neighbours react to the drag.
-    // dragfree → freeze: stop cola, mark pinned, persist position.
-    cy.on("grab", "node", () => {
+    // Cola only treats node.locked() as fixed. To keep already-pinned nodes
+    // anchored while a different node is dragged, we lock them at grab time
+    // and unlock everyone again at dragfree — so any pin can still be
+    // re-grabbed later.
+    cy.on("grab", "node", (e) => {
+      const grabbed = e.target as cytoscape.NodeSingular;
+      cy.nodes(".pinned").not(grabbed).lock();
       startLive();
     });
     cy.on("dragfree", "node", (e) => {
       stopLive();
+      cy.nodes(":locked").unlock();
       const n = e.target as cytoscape.NodeSingular;
       const pos = n.position();
       n.addClass("pinned");
