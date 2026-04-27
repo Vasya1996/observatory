@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
-// @ts-expect-error — fcose has no bundled types
-import fcose from "cytoscape-fcose";
+// @ts-expect-error — cola has no bundled types
+import cola from "cytoscape-cola";
 import { useStore } from "../state/store";
 import type { Edge, FileEntry } from "../types";
 
-cytoscape.use(fcose);
+cytoscape.use(cola);
 
 interface Props {
   files: FileEntry[];
@@ -183,17 +183,19 @@ export function GraphCanvas({ files, edges }: Props) {
         },
       ],
       layout: {
-        name: "fcose",
-        animate: false,
-        randomize: true,
-        nodeRepulsion: 6500,
-        idealEdgeLength: 90,
+        name: "cola",
+        animate: true,
+        infinite: true,
+        fit: false,
+        nodeSpacing: 16,
+        edgeLength: 110,
+        randomize: Object.keys(initialPins).length === 0,
+        // Cola listens to grab/dragfree on its own — neighbours follow the
+        // dragged node live, and a released node stays where it landed.
       } as cytoscape.LayoutOptions,
     });
 
-    // Snap pinned nodes to their saved positions after layout.
-    // (Earlier we used fcose's fixedNodeConstraint, but it left edge endpoints
-    // out of sync with nodes during subsequent drags.)
+    // Snap pinned nodes to their saved positions before the simulation settles.
     for (const [id, pos] of Object.entries(initialPins)) {
       const n = cy.getElementById(id);
       if (n.nonempty()) n.position(pos).addClass("pinned");
