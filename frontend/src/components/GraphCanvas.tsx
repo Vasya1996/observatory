@@ -197,10 +197,12 @@ export function GraphCanvas({ files, edges }: Props) {
       } as cytoscape.LayoutOptions,
     });
 
-    // Mark initially-pinned nodes.
+    // Mark initially-pinned nodes (visual only — fcose already honored their
+    // positions via fixedNodeConstraint, and we want the user to be able to
+    // pick them up again).
     for (const id of Object.keys(initialPins)) {
       const n = cy.getElementById(id);
-      if (n.nonempty()) n.addClass("pinned").lock();
+      if (n.nonempty()) n.addClass("pinned");
     }
 
     // ----- hover behavior -----
@@ -219,10 +221,12 @@ export function GraphCanvas({ files, edges }: Props) {
     });
 
     // ----- drag to pin (locked design #15) -----
+    // Don't lock the node — that would prevent re-dragging and freeze the
+    // edges connected to it. Just persist the position and mark it visually.
     cy.on("dragfree", "node", (e) => {
       const n = e.target as cytoscape.NodeSingular;
       const pos = n.position();
-      n.addClass("pinned").lock();
+      n.addClass("pinned");
       useStore.getState().setPin(n.id(), { x: pos.x, y: pos.y });
     });
 
