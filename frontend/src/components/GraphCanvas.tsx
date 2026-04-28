@@ -4,7 +4,7 @@ import cytoscape from "cytoscape";
 import cola from "cytoscape-cola";
 import { useStore } from "../state/store";
 import type { Edge, FileEntry, FileKind } from "../types";
-import { ICON_BY_KIND, isIconKind } from "./nodeIcons";
+import { isIconKind } from "./nodeIcons";
 
 cytoscape.use(cola);
 
@@ -97,7 +97,6 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
           kind: f.kind,
           color: nodeColor(f.kind),
           size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),
-          iconUrl: ICON_BY_KIND[f.kind] ?? "",
         },
       })),
       ...edges.map((e) => ({
@@ -132,15 +131,6 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
             "border-width": 0,
             "transition-property": "opacity, border-width, border-color",
             "transition-duration": 120,
-          },
-        },
-        {
-          selector:
-            'node[kind = "skill"], node[kind = "plugin_manifest"], node[kind = "plugin_registry"], node[kind = "mcp"], node[kind = "settings"], node[kind = "automemory"]',
-          style: {
-            "background-image": "data(iconUrl)",
-            "background-fit": "contain",
-            "background-image-opacity": 1,
           },
         },
         {

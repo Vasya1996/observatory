@@ -1,48 +1,32 @@
-// Inline lucide icon paths (https://lucide.dev) used as Cytoscape node
-// background-image data URLs. Avoids pulling lucide-react at runtime.
-//
-// Stroke colour and width are baked in — we want a slightly thinner stroke
-// than lucide's default 2 so the icon stays crisp at ~15px effective size.
+// Inline lucide icon paths (https://lucide.dev). Rendered as DOM SVG by
+// IconOverlay, anchored to each icon-kind node's renderedPosition. The
+// previous data-URL-on-cytoscape-background pipeline is gone — see
+// IconOverlay.tsx for the rationale.
 
 import type { FileKind } from "../types";
 
-const STROKE = "#e8e4d8"; // --paper
-const STROKE_WIDTH = 1.6;
-
-// Lucide icons share a 24×24 design grid, but their ink doesn't always sit on
-// the geometric centre (12, 12): lock's body weighs the ink centroid down to
-// (12, 14.5). Cytoscape's `background-fit: contain` centres the SVG viewBox,
-// not the ink, so a default `0 0 24 24` viewBox renders lock visibly low.
-//
-// Fix: pass a per-icon viewBox shifted so the ink centroid lands at the
-// viewport centre. Side stays 24 across all icons → uniform render scale.
-function dataUrl(inner: string, viewBox: string = "0 0 24 24"): string {
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" fill="none" ` +
-    `stroke="${STROKE}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" ` +
-    `stroke-linejoin="round">${inner}</svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
+export const ICON_STROKE = "#e8e4d8"; // --paper
+export const ICON_STROKE_WIDTH = 1.6;
 
 const SCROLL = `<path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>`;
 const PLUG = `<path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/>`;
 const SETTINGS = `<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>`;
+// Lock's shackle is `M7 11V7 a5 5 0 0 1 10 0 v4` — the arc has chord (7,7)–(17,7)
+// with rx=ry=5, so the centre is (12,7) and the top of the arc reaches y=2.
+// Ink BBox is therefore y=2..22, centroid (12, 12) — same as the other three
+// icons. The earlier "centroid (12, 14.5)" reading missed the arc and led to
+// a viewBox shift `0 2.5 24 24` that itself moved the icon off-centre.
 const LOCK = `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`;
 
-// Ink bboxes (Lucide source paths):
-//   scroll:   x 2–22,  y 3–21   → centroid (12, 12)
-//   plug:     x 6–18,  y 2–22   → centroid (12, 12)
-//   settings: x 1–23,  y 1–23   → centroid (12, 12)
-//   lock:     x 3–21,  y 7–22   → centroid (12, 14.5)  ← needs viewport shift
-export const ICON_BY_KIND: Partial<Record<FileKind, string>> = {
-  skill:           dataUrl(SCROLL),
-  plugin_manifest: dataUrl(PLUG),
-  plugin_registry: dataUrl(PLUG),
-  mcp:             dataUrl(PLUG),
-  settings:        dataUrl(SETTINGS),
-  automemory:      dataUrl(LOCK, "0 2.5 24 24"),
+export const ICON_PATH_BY_KIND: Partial<Record<FileKind, string>> = {
+  skill: SCROLL,
+  plugin_manifest: PLUG,
+  plugin_registry: PLUG,
+  mcp: PLUG,
+  settings: SETTINGS,
+  automemory: LOCK,
 };
 
 export function isIconKind(k: FileKind): boolean {
-  return k in ICON_BY_KIND;
+  return k in ICON_PATH_BY_KIND;
 }

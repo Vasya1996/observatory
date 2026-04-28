@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type cytoscape from "cytoscape";
 import { GraphCanvas } from "../components/GraphCanvas";
+import { IconOverlay } from "../components/IconOverlay";
 import { PinOverlay } from "../components/PinOverlay";
 import { useStore } from "../state/store";
 
@@ -11,6 +12,7 @@ export function MapView() {
   return (
     <div className="view-shell">
       <GraphCanvas files={files} edges={edges} onReady={setCy} />
+      <IconOverlay cy={cy} />
       <PinOverlay cy={cy} />
     </div>
   );
