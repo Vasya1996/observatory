@@ -9,14 +9,16 @@ import type { FileKind } from "../types";
 const STROKE = "#e8e4d8"; // --paper
 const STROKE_WIDTH = 1.6;
 
-// viewBox is enlarged from 0 0 24 24 to -5 -5 34 34 — adds 5 units of
-// transparent padding on every side. With background-fit: contain on a
-// circle node, the SVG bbox fills the node's inner square; that padding
-// pushes the actual icon content inside the inscribed circle so no path
-// can spill past the rim.
+// viewBox is enlarged from 0 0 24 24 to -8 -8 40 40 — adds 8 units of
+// transparent padding on every side (~33% of the original content
+// dimension). With background-fit: contain on a circle node, the SVG bbox
+// fills the node's inner square; the padding ring keeps the actual icon
+// content well inside the inscribed circle, so the visually densest
+// glyphs (lucide Plug at y=2..22) sit clearly centred without rim
+// overflow.
 function dataUrl(inner: string): string {
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 34 34" fill="none" ` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-8 -8 40 40" fill="none" ` +
     `stroke="${STROKE}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" ` +
     `stroke-linejoin="round">${inner}</svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
