@@ -40,6 +40,8 @@ export interface FileEntry {
   // Plugin name from `.claude-plugin/plugin.json` for plugin_manifest files;
   // null for everything else. UI uses this in place of basename(path).
   display_name?: string | null;
+  // Snapshot count for collapsed plugin manifests; 1 for everything else.
+  cached_versions?: number;
 }
 
 export interface Edge {

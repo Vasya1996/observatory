@@ -49,6 +49,10 @@ class FileEntry(BaseModel):
     # so the graph doesn't show 24+ identical "manifest.json" labels. None for
     # files whose basename is already informative.
     display_name: Optional[str] = None
+    # Number of cached snapshots represented by this single graph node.
+    # >1 only for `~/.claude/remote/plugins/<hash>/manifest.json` collapsed
+    # by plugin name; 1 elsewhere. Inspector can surface as "26 cached versions".
+    cached_versions: int = 1
 
 
 class Edge(BaseModel):

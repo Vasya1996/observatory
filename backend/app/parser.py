@@ -52,6 +52,8 @@ class ParsedFile:
     # "design"). When set, the graph and inspector show this instead of the
     # basename. None = fall back to basename.
     display_name: Optional[str] = None
+    # Snapshot count for collapsed plugin manifests; 1 for everything else.
+    cached_versions: int = 1
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)

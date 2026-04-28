@@ -25,6 +25,12 @@ class RawFile:
     # Used for LSP-style plugins that ship a README.md but no plugin.json —
     # we want them on the graph by their registry name, not "README.md".
     display_name_override: Optional[str] = None
+    # Number of cached snapshots this RawFile represents. >1 only for collapsed
+    # plugin manifests under ~/.claude/remote/plugins/<hash>/ — Claude Code
+    # keeps every fetched manifest version, so a single logical plugin can
+    # have N copies on disk. The graph shows one node per logical name; the
+    # inspector can surface this count.
+    cached_versions: int = 1
 
 
 def _exists_file(p: Path) -> bool:
@@ -38,6 +44,29 @@ def _glob(directory: Path, pattern: str) -> Iterable[Path]:
     if not directory.is_dir():
         return []
     return sorted(directory.glob(pattern))
+
+
+def _read_plugin_name(plugin_json: Path) -> Optional[str]:
+    """Extract the canonical plugin `name` from a `.claude-plugin/plugin.json`.
+    Returns None if the file is absent or unreadable.
+    """
+    if not _exists_file(plugin_json):
+        return None
+    try:
+        import json
+        with plugin_json.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    name = data.get("name") if isinstance(data, dict) else None
+    return name if isinstance(name, str) and name else None
+
+
+def _safe_mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def scan() -> list[RawFile]:
@@ -76,13 +105,45 @@ def scan() -> list[RawFile]:
             if _exists_file(skill_md):
                 out.append(RawFile(skill_md, "skill"))
 
-    # Plugin manifests.
+    # Plugin manifests under ~/.claude/remote/plugins/<hash>/. Each plugin can
+    # have many version snapshots; Claude Code never garbage-collects them.
+    # Collapse by canonical name (from sibling .claude-plugin/plugin.json):
+    # one RawFile per logical plugin, representative = most-recently-touched
+    # snapshot. cached_versions carries the original count for the inspector.
+    #
+    # Two file shapes coexist under <hash>/:
+    #   * `manifest.json` (anthropic-skills) — Claude-Code-managed, with
+    #     skills[] enabled flags. Preferred representative when present.
+    #   * No `manifest.json` (design plugin from desktop app) — only
+    #     `.claude-plugin/plugin.json` + `.mcp.json`. Fall back to plugin.json.
     plugins_root = config.CLAUDE_DIR / "remote" / "plugins"
     if plugins_root.is_dir():
+        grouped: dict[str, list[Path]] = {}
+        unnamed: list[Path] = []
         for plug_dir in sorted(p for p in plugins_root.iterdir() if p.is_dir()):
             mf = plug_dir / "manifest.json"
-            if _exists_file(mf):
-                out.append(RawFile(mf, "plugin_manifest"))
+            plugin_json = plug_dir / ".claude-plugin" / "plugin.json"
+            representative = mf if _exists_file(mf) else (
+                plugin_json if _exists_file(plugin_json) else None
+            )
+            if representative is None:
+                continue
+            name = _read_plugin_name(plugin_json)
+            if name:
+                grouped.setdefault(name, []).append(representative)
+            else:
+                unnamed.append(representative)
+        for manifests in grouped.values():
+            canonical = max(manifests, key=_safe_mtime)
+            out.append(
+                RawFile(
+                    canonical,
+                    "plugin_manifest",
+                    cached_versions=len(manifests),
+                )
+            )
+        for mf in unnamed:
+            out.append(RawFile(mf, "plugin_manifest"))
 
     # Plugin registry.
     plugin_registry = config.CLAUDE_DIR / "plugins" / "installed_plugins.json"

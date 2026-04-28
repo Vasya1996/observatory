@@ -128,6 +128,7 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
         # carry that information.
         if rf.display_name_override:
             pf.display_name = rf.display_name_override
+        pf.cached_versions = rf.cached_versions
         parsed.append(pf)
 
     # Index basename → list of file_ids for mention resolution.
@@ -231,6 +232,7 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
                 line_count=p.line_count,
                 validation=p.issues,
                 display_name=p.display_name,
+                cached_versions=p.cached_versions,
             )
         )
 
