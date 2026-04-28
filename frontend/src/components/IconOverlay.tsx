@@ -1,10 +1,10 @@
 import { useEffect, useReducer } from "react";
 import type cytoscape from "cytoscape";
-import type { FileKind } from "../types";
 import {
   ICON_PATH_BY_KIND,
   ICON_STROKE,
   ICON_STROKE_WIDTH,
+  type NodeKind,
 } from "./nodeIcons";
 
 interface Props {
@@ -49,7 +49,11 @@ export function IconOverlay({ cy }: Props) {
 
   const items: { id: string; x: number; y: number; w: number; inner: string }[] = [];
   cy.nodes().forEach((n) => {
-    const inner = ICON_PATH_BY_KIND[n.data("kind") as FileKind];
+    // Collapsed children are styled `display: none` — cy.nodes() still
+    // returns them, so skip explicitly to avoid drawing icons at the folder's
+    // position while the halo is collapsed.
+    if (n.hasClass("folded")) return;
+    const inner = ICON_PATH_BY_KIND[n.data("kind") as NodeKind];
     if (!inner) return;
     const p = n.renderedPosition();
     const w = n.renderedOuterWidth();

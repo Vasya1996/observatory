@@ -5,6 +5,11 @@
 
 import type { FileKind } from "../types";
 
+// `data.kind` on a cytoscape node is the union of real backend FileKind
+// values plus frontend-synthetic kinds. Today the only synthetic is `folder`
+// (umbrella for collapsed plugin/skill siblings, see folderGroups.ts).
+export type NodeKind = FileKind | "folder";
+
 export const ICON_STROKE = "#e8e4d8"; // --paper
 export const ICON_STROKE_WIDTH = 1.6;
 
@@ -20,8 +25,10 @@ const LOCK = `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="
 // Lucide `code-xml` (rebrand of code2): the `</>` glyph for shell/python/etc
 // scripts referenced from a hook command. Centroid (12, 12) by construction.
 const CODE = `<path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/>`;
+// Lucide `folder` — umbrella node for collapsed plugin/skill siblings.
+const FOLDER = `<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>`;
 
-export const ICON_PATH_BY_KIND: Partial<Record<FileKind, string>> = {
+export const ICON_PATH_BY_KIND: Partial<Record<NodeKind, string>> = {
   skill: SCROLL,
   plugin_manifest: PLUG,
   plugin_registry: PLUG,
@@ -29,8 +36,9 @@ export const ICON_PATH_BY_KIND: Partial<Record<FileKind, string>> = {
   settings: SETTINGS,
   automemory: LOCK,
   script: CODE,
+  folder: FOLDER,
 };
 
-export function isIconKind(k: FileKind): boolean {
+export function isIconKind(k: NodeKind): boolean {
   return k in ICON_PATH_BY_KIND;
 }

@@ -61,6 +61,10 @@ export function PinOverlay({ cy }: Props) {
       {ids.map((id) => {
         const n = cy.getElementById(id);
         if (n.empty()) return null;
+        // Don't draw the pushpin glyph for nodes that are collapsed inside a
+        // folder-node halo — the underlying node still exists with its
+        // restored pin position, but the icon is hidden until hover.
+        if (n.hasClass("folded")) return null;
         const p = n.renderedPosition();
         const w = n.renderedOuterWidth();
         const h = n.renderedOuterHeight();

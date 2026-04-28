@@ -3,8 +3,13 @@ import cytoscape from "cytoscape";
 // @ts-expect-error — cola has no bundled types
 import cola from "cytoscape-cola";
 import { useStore } from "../state/store";
-import type { Edge, FileEntry, FileKind } from "../types";
-import { isIconKind } from "./nodeIcons";
+import type { Edge, FileEntry } from "../types";
+import { isIconKind, type NodeKind } from "./nodeIcons";
+import {
+  buildChildFolderIndex,
+  computeFolderGroups,
+  type FolderGroup,
+} from "./folderGroups";
 
 cytoscape.use(cola);
 
@@ -31,7 +36,7 @@ const C = {
 };
 
 // Step 2.5: kind-as-category colour (no more memory-by-frontmatter-type).
-function nodeColor(kind: FileKind): string {
+function nodeColor(kind: NodeKind): string {
   switch (kind) {
     case "claude_md":
     case "rule":
@@ -47,9 +52,20 @@ function nodeColor(kind: FileKind): string {
 const SIZE_MIN = 15;
 const SIZE_MAX = 31;
 const ICON_SIZE = 28;
+// Folder-node — slightly larger than a regular icon node so the umbrella
+// reads as a container, not just another sibling.
+const FOLDER_SIZE = 34;
+// Halo radius (rendered px) for the fan-out around a hovered folder. Sized so
+// 6 children at ICON_SIZE don't overlap the folder or each other.
+const FOLDER_HALO_RADIUS = 80;
+// Delay before re-collapsing after the cursor leaves the folder/halo. Gives
+// the user time to slide the cursor between the folder and its children
+// without the halo flickering closed.
+const FOLDER_COLLAPSE_DELAY_MS = 160;
 
 // sqrt-scaled size for colored-circle nodes; flat 23px for icon nodes.
-function nodeSize(kind: FileKind, inDeg: number, maxInDeg: number): number {
+function nodeSize(kind: NodeKind, inDeg: number, maxInDeg: number): number {
+  if (kind === "folder") return FOLDER_SIZE;
   if (isIconKind(kind)) return ICON_SIZE;
   if (maxInDeg <= 0) return SIZE_MIN;
   const t = Math.sqrt(inDeg / maxInDeg);
@@ -105,6 +121,14 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
 
     const initialPins = pinsRef.current;
 
+    // Folder groups: collapse N siblings of the same kind under one umbrella
+    // dir into a single folder-node. Computed before element building so the
+    // children can be tagged with the `folded` class up front.
+    const folderGroups: FolderGroup[] = computeFolderGroups(files);
+    const groupById = new Map(folderGroups.map((g) => [g.id, g]));
+    const childFolderIndex = buildChildFolderIndex(folderGroups);
+    const isFoldedChild = (id: string) => childFolderIndex.has(id);
+
     // Inbound count is per-target across both edge kinds. Max is taken only
     // over colored-circle nodes so a heavily-referenced icon kind can't
     // shrink the colored cohort.
@@ -129,6 +153,20 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
           color: nodeColor(f.kind),
           size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),
         },
+        // Folded children get `display: none` until the user hovers their
+        // folder; the underlying cy node still exists so its edges stay in
+        // the graph and reappear instantly when the halo opens.
+        classes: isFoldedChild(f.id) ? "folded" : undefined,
+      })),
+      ...folderGroups.map((g) => ({
+        data: {
+          id: g.id,
+          label: `${g.label} · ${g.childIds.length}`,
+          kind: "folder" as const,
+          color: C.iconBg,
+          size: FOLDER_SIZE,
+        },
+        classes: "folder-node",
       })),
       ...edges.map((e) => ({
         data: {
@@ -253,6 +291,25 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
             "border-color": C.paper,
           },
         },
+        // Folder-node: a thin rim that distinguishes the umbrella from a
+        // regular icon-kind node. Edges connecting to folded children
+        // disappear automatically because cytoscape hides any edge whose
+        // endpoint has `display: none`.
+        {
+          selector: ".folder-node",
+          style: {
+            "border-width": 1,
+            "border-color": C.paperFaint,
+            "border-style": "dashed",
+            color: C.paper,
+            "font-size": 10,
+          },
+        },
+        // Folded children: hidden until the parent folder is hovered.
+        {
+          selector: ".folded",
+          style: { display: "none" },
+        },
       ],
       // Initial layout: a one-shot cola run to settle node positions.
       // Live simulation is only spun up while the user is dragging.
@@ -276,6 +333,111 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
       if (n.nonempty()) n.position(pos).addClass("pinned");
     }
 
+    // Post-layout: for each folder group, place the folder at the centroid
+    // of its children's settled positions, then snap the children to the
+    // folder. The children stay laid-out by cola (so their edges to the rest
+    // of the graph aren't ignored), but visually collapse onto the folder
+    // until the user hovers. This keeps the folder anchored to where its
+    // contents naturally cluster — important when many edges point at the
+    // children — instead of floating in random whitespace.
+    const settleFolders = () => {
+      for (const g of folderGroups) {
+        const folder = cy.getElementById(g.id);
+        if (folder.empty()) continue;
+        // If the folder itself is pinned, leave it where the user put it;
+        // children still snap to that position.
+        const pinned = folder.hasClass("pinned");
+        if (!pinned) {
+          let cx = 0;
+          let cy_ = 0;
+          let n = 0;
+          for (const cid of g.childIds) {
+            const child = cy.getElementById(cid);
+            if (child.empty()) continue;
+            const p = child.position();
+            cx += p.x;
+            cy_ += p.y;
+            n += 1;
+          }
+          if (n > 0) folder.position({ x: cx / n, y: cy_ / n });
+        }
+        const fp = folder.position();
+        for (const cid of g.childIds) {
+          const child = cy.getElementById(cid);
+          if (!child.empty()) child.position({ x: fp.x, y: fp.y });
+        }
+      }
+    };
+    cy.one("layoutstop", settleFolders);
+    // Cola is one-shot with `animate: false`; in some setups layoutstop
+    // fires synchronously during `.run()` (already invoked by cytoscape's
+    // constructor with the layout option above). Run once unconditionally so
+    // we settle even if the listener missed the event.
+    settleFolders();
+
+    // ----- folder hover / fan-out -----
+    // Tracks the currently-expanded folder so the collapse timer knows which
+    // group to retract, and so re-entering the same folder is a no-op.
+    let openFolderId: string | null = null;
+    let collapseTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const cancelCollapse = () => {
+      if (collapseTimer) {
+        clearTimeout(collapseTimer);
+        collapseTimer = null;
+      }
+    };
+
+    const collapseFolder = (immediate = false) => {
+      const apply = () => {
+        if (!openFolderId) return;
+        const group = groupById.get(openFolderId);
+        openFolderId = null;
+        collapseTimer = null;
+        if (!group) return;
+        const folder = cy.getElementById(group.id);
+        const center = folder.empty() ? { x: 0, y: 0 } : folder.position();
+        for (const cid of group.childIds) {
+          const child = cy.getElementById(cid);
+          if (child.empty()) continue;
+          child.position({ x: center.x, y: center.y });
+          child.addClass("folded");
+        }
+      };
+      if (immediate) {
+        cancelCollapse();
+        apply();
+        return;
+      }
+      cancelCollapse();
+      collapseTimer = setTimeout(apply, FOLDER_COLLAPSE_DELAY_MS);
+    };
+
+    const expandFolder = (folderId: string) => {
+      const group = groupById.get(folderId);
+      if (!group) return;
+      cancelCollapse();
+      if (openFolderId === folderId) return;
+      if (openFolderId && openFolderId !== folderId) collapseFolder(true);
+      openFolderId = folderId;
+      const folder = cy.getElementById(folderId);
+      if (folder.empty()) return;
+      const center = folder.position();
+      const N = group.childIds.length;
+      // Convert the desired rendered radius into the model coordinate radius
+      // cytoscape positions live in. zoom() == rendered/model ratio.
+      const modelRadius = FOLDER_HALO_RADIUS / Math.max(0.01, cy.zoom());
+      group.childIds.forEach((cid, i) => {
+        const angle = (Math.PI * 2 * i) / Math.max(1, N) - Math.PI / 2;
+        const x = center.x + modelRadius * Math.cos(angle);
+        const y = center.y + modelRadius * Math.sin(angle);
+        const child = cy.getElementById(cid);
+        if (child.empty()) return;
+        child.position({ x, y });
+        child.removeClass("folded");
+      });
+    };
+
     // ----- drag-time neighbour pull -----
     // Cola's constraint solver runs slower than mouse-move events fire, so
     // a continuous live layout never visually catches up. Instead, we move
@@ -288,6 +450,28 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
     // ----- hover behavior -----
     cy.on("mouseover", "node", (e) => {
       const n = e.target as cytoscape.NodeSingular;
+      const id = n.id();
+      const kind = n.data("kind") as NodeKind | undefined;
+
+      if (kind === "folder") {
+        // Folder hover: open the halo. Skip the default dim — children + the
+        // rest of the graph need to stay visible so the user can read the
+        // children's existing edges to/from outside the folder.
+        expandFolder(id);
+        return;
+      }
+
+      // Hovering one of the currently-fanned-out children: keep the halo
+      // open while the cursor is on the child. Fall through so the child
+      // gets the normal direction-encoding hover treatment.
+      if (childFolderIndex.get(id) === openFolderId && openFolderId) {
+        cancelCollapse();
+      } else if (openFolderId && childFolderIndex.get(id) !== openFolderId) {
+        // Cursor moved to an unrelated node — close the halo immediately so
+        // it doesn't linger over the next interaction.
+        collapseFolder(true);
+      }
+
       const inc = n.connectedEdges();
       const out = inc.filter((ed) => ed.data("source") === n.id());
       const into = inc.filter((ed) => ed.data("target") === n.id());
@@ -296,8 +480,19 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
       out.addClass("hover-out");
       into.addClass("hover-in");
     });
-    cy.on("mouseout", "node", () => {
+    cy.on("mouseout", "node", (e) => {
       cy.elements().removeClass("dim hover-out hover-in");
+      const n = e.target as cytoscape.NodeSingular;
+      const id = n.id();
+      const kind = n.data("kind") as NodeKind | undefined;
+      // Arm collapse when the cursor leaves either the folder itself or one
+      // of its currently-displayed children. Re-entering the folder or any
+      // child clears the timer.
+      if (kind === "folder" && id === openFolderId) {
+        collapseFolder(false);
+      } else if (childFolderIndex.get(id) === openFolderId && openFolderId) {
+        collapseFolder(false);
+      }
     });
 
     // ----- drag to pin (locked design #15) -----
@@ -337,7 +532,12 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
       useStore.getState().select((e.target as cytoscape.NodeSingular).id());
     });
     cy.on("tap", (e) => {
-      if (e.target === cy) useStore.getState().select(null);
+      if (e.target === cy) {
+        useStore.getState().select(null);
+        // Tap on background closes any expanded halo immediately so a
+        // long-paused cursor doesn't keep the children stuck out.
+        if (openFolderId) collapseFolder(true);
+      }
     });
 
     // Edge hover: hand the original Edge back to the parent so MapView can
@@ -356,6 +556,7 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
     cyRef.current = cy;
     onReady?.(cy);
     return () => {
+      cancelCollapse();
       onReady?.(null);
       cy.destroy();
       cyRef.current = null;
