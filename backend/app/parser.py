@@ -258,18 +258,25 @@ def parse_markdown(
 
 
 def _plugin_display_name(manifest_path: Path) -> Optional[str]:
-    """For `~/.claude/remote/plugins/<hash>/manifest.json`, look up the
-    sibling `.claude-plugin/plugin.json` and return its `name` field. That is
-    how Claude itself identifies the plugin (e.g. "anthropic-skills",
-    "design") — the manifest.json basename alone is opaque and identical
-    across every snapshot. Returns None if the sibling file is missing or
-    unparseable."""
-    sibling = manifest_path.parent / ".claude-plugin" / "plugin.json"
-    if not sibling.is_file():
+    """Resolve the human-readable plugin name. Two file shapes both classified
+    as `plugin_manifest`:
+
+    * `~/.claude/remote/plugins/<hash>/manifest.json` — opaque basename, real
+      identity in sibling `.claude-plugin/plugin.json`.
+    * `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/plugin.json`
+      — the file IS the identity; read it directly.
+
+    Returns None if no readable identity file exists.
+    """
+    if manifest_path.name == "plugin.json":
+        target = manifest_path
+    else:
+        target = manifest_path.parent / ".claude-plugin" / "plugin.json"
+    if not target.is_file():
         return None
     try:
         import json
-        with sibling.open("r", encoding="utf-8") as f:
+        with target.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return None

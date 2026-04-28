@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 from . import config
 from .models import FileKind
@@ -21,6 +21,10 @@ class RawFile:
     path: Path
     kind: FileKind
     readonly: bool = False
+    # Optional display label that overrides whatever the parser would derive.
+    # Used for LSP-style plugins that ship a README.md but no plugin.json —
+    # we want them on the graph by their registry name, not "README.md".
+    display_name_override: Optional[str] = None
 
 
 def _exists_file(p: Path) -> bool:
@@ -85,6 +89,14 @@ def scan() -> list[RawFile]:
     if _exists_file(plugin_registry):
         out.append(RawFile(plugin_registry, "plugin_registry"))
 
+    # User-installed plugins. Their files live under `plugins/cache/...` which
+    # is blacklisted (would drown the graph in LICENSE/README/screenshots) — but
+    # we still want each plugin's identity on the graph. Hand-pick: only the
+    # `plugin.json` (canonical name + version) per installed plugin, sourced
+    # from the registry's installPath. Skills/commands inside each plugin are
+    # ignored for now; surfacing them needs a separate UX decision.
+    out.extend(_scan_user_plugins(plugin_registry))
+
     # Settings.
     settings = config.CLAUDE_DIR / "settings.json"
     if _exists_file(settings):
@@ -105,6 +117,72 @@ def scan() -> list[RawFile]:
         for p in _glob(config.AUTO_MEMORY_DIR, "*.md"):
             out.append(RawFile(p, "automemory", readonly=True))
 
+    return out
+
+
+def _scan_user_plugins(registry: Path) -> list[RawFile]:
+    """Resolve each installed plugin from `installed_plugins.json` to a single
+    representative file on the graph.
+
+    Preferred target: `<installPath>/.claude-plugin/plugin.json` — carries the
+    canonical name + version. Fallback (LSP-style plugins that ship neither
+    skills nor commands): `<installPath>/README.md`, with the plugin name
+    pulled from the registry key (`<plugin>@<marketplace>`) so the graph node
+    is still labelled correctly.
+
+    Bypasses the blacklist deliberately — targets exact files, not a directory
+    walk, so the "thousands of files" risk doesn't apply.
+    """
+    if not _exists_file(registry):
+        return []
+    try:
+        import json
+        with registry.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    if not isinstance(plugins, dict):
+        return []
+    out: list[RawFile] = []
+    seen: set[Path] = set()
+    for registry_key, entries in plugins.items():
+        if not isinstance(entries, list):
+            continue
+        # registry_key shape: "<plugin>@<marketplace>"
+        plugin_name = (
+            registry_key.split("@", 1)[0]
+            if isinstance(registry_key, str) and "@" in registry_key
+            else (registry_key if isinstance(registry_key, str) else None)
+        )
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            install_path = entry.get("installPath")
+            if not isinstance(install_path, str) or not install_path:
+                continue
+            base = Path(install_path)
+            plugin_json = base / ".claude-plugin" / "plugin.json"
+            if _exists_file(plugin_json):
+                if plugin_json in seen:
+                    continue
+                seen.add(plugin_json)
+                # plugin.json carries its own name; no override needed.
+                out.append(RawFile(plugin_json, "plugin_manifest"))
+                continue
+            readme = base / "README.md"
+            if _exists_file(readme) and plugin_name:
+                if readme in seen:
+                    continue
+                seen.add(readme)
+                out.append(
+                    RawFile(
+                        readme,
+                        "plugin_manifest",
+                        readonly=True,
+                        display_name_override=plugin_name,
+                    )
+                )
     return out
 
 
