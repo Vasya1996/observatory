@@ -63,4 +63,5 @@ export interface UiState {
   pins: Record<string, { x: number; y: number }>;
   last_cwd: string | null;
   last_view: ViewKey | null;
+  show_internal?: boolean;
 }

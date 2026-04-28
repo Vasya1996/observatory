@@ -138,3 +138,8 @@ class UiState(BaseModel):
     pins: dict[str, dict[str, float]] = Field(default_factory=dict)  # {file_id: {x, y}}
     last_cwd: Optional[str] = None
     last_view: Optional[str] = None
+    # When false (default), the Map hides Claude-Code-internal nodes that
+    # duplicate already-visible state — currently just `installed_plugins.json`,
+    # which is a registry whose contents are already represented by the plugin
+    # nodes themselves. Toggle in HeaderChrome restores them.
+    show_internal: bool = False

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchIndex, fetchState } from "./api/client";
 import { HeaderChrome } from "./components/HeaderChrome";
 import { useStore } from "./state/store";
+import { applyInternalFilter } from "./state/visibility";
 import { MapView } from "./views/MapView";
 import { SimulatorView } from "./views/SimulatorView";
 import { EditorView } from "./views/EditorView";
@@ -13,6 +14,7 @@ export default function App() {
   const view = useStore((s) => s.view);
   const files = useStore((s) => s.files);
   const edges = useStore((s) => s.edges);
+  const showInternal = useStore((s) => s.showInternal);
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +36,13 @@ export default function App() {
     return () => { cancelled = true; };
   }, [setIndex, hydrate]);
 
+  // Counts in HeaderChrome track what's actually rendered, so the toggle
+  // changes both the graph AND the pill in lockstep.
+  const visible = useMemo(
+    () => applyInternalFilter(files, edges, showInternal),
+    [files, edges, showInternal],
+  );
+
   if (loading) return <div className="center-overlay">Loading…</div>;
   if (error) return <div className="center-overlay">Error: {error}</div>;
   if (files.length === 0)
@@ -42,8 +51,8 @@ export default function App() {
   return (
     <>
       <HeaderChrome
-        fileCount={files.length}
-        edgeCount={edges.length}
+        fileCount={visible.files.length}
+        edgeCount={visible.edges.length}
         watcherLive
       />
       {view === "map" && <MapView />}

@@ -20,13 +20,21 @@ interface Store {
   lastCwd: string | null;
   setLastCwd: (cwd: string | null) => void;
 
+  showInternal: boolean;
+  setShowInternal: (v: boolean) => void;
+
   hydrate: (s: UiState) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function snapshot(s: Store): UiState {
-  return { pins: s.pins, last_cwd: s.lastCwd, last_view: s.view };
+  return {
+    pins: s.pins,
+    last_cwd: s.lastCwd,
+    last_view: s.view,
+    show_internal: s.showInternal,
+  };
 }
 
 function schedulePersist(getState: () => Store) {
@@ -72,10 +80,17 @@ export const useStore = create<Store>((set, get) => ({
     schedulePersist(get);
   },
 
+  showInternal: false,
+  setShowInternal: (v) => {
+    set({ showInternal: v });
+    schedulePersist(get);
+  },
+
   hydrate: (s) =>
     set({
       pins: s.pins ?? {},
       lastCwd: s.last_cwd ?? null,
       view: (s.last_view ?? "map") as ViewKey,
+      showInternal: s.show_internal ?? false,
     }),
 }));

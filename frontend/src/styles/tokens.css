@@ -138,6 +138,17 @@ body {
 }
 .dot.warn { background: var(--amber); box-shadow: 0 0 0 3px rgba(240, 168, 58, 0.12); }
 .dot.lock { background: var(--paper-faint); }
+.status .pill.toggle {
+  cursor: pointer;
+  user-select: none;
+  font: inherit;
+  letter-spacing: 0.02em;
+}
+.status .pill.toggle:hover { color: var(--paper); }
+.status .pill.toggle.on {
+  border-color: var(--amber);
+  color: var(--amber);
+}
 
 /* ---------- view shell ---------- */
 .view-shell {
