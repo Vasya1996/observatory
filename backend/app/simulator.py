@@ -188,9 +188,10 @@ def simulate(
             tgt = by_id.get(e.target)
             if not tgt:
                 continue
+            line_hint = f":{e.lines[0]}" if e.lines else ""
             _push(
                 tgt, "loaded", "@import",
-                f"Imported via @ from {by_id[src].display}:{e.line}",
+                f"Imported via @ from {by_id[src].display}{line_hint}",
             )
             queue.append(tgt.id)
 

@@ -40,11 +40,13 @@ export interface FileEntry {
 }
 
 export interface Edge {
-  id: string;
+  id: string; // `${source}:${target}:${kind}` — one edge per relation, not per ref
   source: string;
   target: string;
   kind: EdgeKind;
-  line?: number | null;
+  // Source-lines where the relation appears. `lines.length` = number of
+  // distinct mention/import call-sites in `source` pointing at `target`.
+  lines: number[];
 }
 
 export interface IndexResponse {

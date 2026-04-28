@@ -48,11 +48,15 @@ class FileEntry(BaseModel):
 
 
 class Edge(BaseModel):
-    id: str
+    id: str  # f"{source}:{target}:{kind}" — one edge per (src, tgt, kind) tuple
     source: str  # file_id
     target: str  # file_id
     kind: EdgeKind
-    line: Optional[int] = None
+    # Each source-line where the reference appears. Multiple mentions of the
+    # same target collapse into one edge with all line numbers preserved here,
+    # so the inspector can list "MEMORY references user.md from lines 3, 47, 112"
+    # while the graph stays one-line-per-relation.
+    lines: list[int] = Field(default_factory=list)
 
 
 class IndexResponse(BaseModel):

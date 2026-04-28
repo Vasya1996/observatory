@@ -135,7 +135,12 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
         by_basename[p.raw_path.name].append(p.raw_path)
 
     files: list[FileEntry] = []
-    edges: list[Edge] = []
+    # Aggregate refs into one edge per (source, target, kind) tuple. The line
+    # numbers of every contributing ref accumulate in `lines` (deduped + sorted),
+    # so a markdown link like `[name](name)` — which the parser sees as two
+    # mentions on the same line — stays one edge with one line number, and
+    # multi-line repeats become one edge with N line numbers.
+    edge_acc: dict[tuple[str, str, str], set[int]] = defaultdict(set)
 
     for p in parsed:
         fid = file_id(p.raw_path)
@@ -154,15 +159,10 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
                 target_path = _resolve_import_path(ref.raw_target, p.raw_path.parent)
                 if target_path in {q.raw_path for q in parsed}:
                     target_id = hashlib.sha1(str(target_path).encode("utf-8")).hexdigest()
-                    edges.append(
-                        Edge(
-                            id=f"{fid}:{target_id}:import:{ref.line}",
-                            source=fid,
-                            target=target_id,
-                            kind="import",
-                            line=ref.line,
-                        )
-                    )
+                    if ref.line is not None:
+                        edge_acc[(fid, target_id, "import")].add(ref.line)
+                    else:
+                        edge_acc[(fid, target_id, "import")]  # ensure key exists
                 else:
                     p.issues.append(
                         Issue(
@@ -199,15 +199,10 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
                 target_id = hashlib.sha1(str(target_path).encode("utf-8")).hexdigest()
                 if target_id == fid:
                     continue  # ignore self-mentions
-                edges.append(
-                    Edge(
-                        id=f"{fid}:{target_id}:mention:{ref.line}",
-                        source=fid,
-                        target=target_id,
-                        kind="mention",
-                        line=ref.line,
-                    )
-                )
+                if ref.line is not None:
+                    edge_acc[(fid, target_id, "mention")].add(ref.line)
+                else:
+                    edge_acc[(fid, target_id, "mention")]
 
         paths_status = _check_paths_status(p.paths_globs) if p.kind == "rule" else "n_a"
         if paths_status == "missing":
@@ -237,12 +232,21 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
             )
         )
 
-    # Deduplicate edges (mentions of the same target on the same line dedup
-    # already via id; cross-line duplicates are intentional — they show "MEMORY
-    # references user.md from 3 places").
-
-    # Sort edges by source for determinism in the API output.
-    edges.sort(key=lambda e: (e.source, e.target, e.kind, e.line or 0))
+    # Materialise aggregated refs into one Edge per (source, target, kind).
+    # `lines` carries the full set of source-lines the inspector can show
+    # ("references appear on lines 3, 47, 112"); the graph still draws a single
+    # curve per direction.
+    edges: list[Edge] = [
+        Edge(
+            id=f"{src}:{tgt}:{kind}",
+            source=src,
+            target=tgt,
+            kind=kind,
+            lines=sorted(line_set),
+        )
+        for (src, tgt, kind), line_set in edge_acc.items()
+    ]
+    edges.sort(key=lambda e: (e.source, e.target, e.kind))
 
     return files, edges
 

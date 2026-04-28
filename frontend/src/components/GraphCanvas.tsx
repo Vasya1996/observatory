@@ -12,6 +12,7 @@ interface Props {
   files: FileEntry[];
   edges: Edge[];
   onReady?: (cy: cytoscape.Core | null) => void;
+  onHoverEdge?: (edge: Edge | null) => void;
 }
 
 // Tokens (kept here for cytoscape — JS can't read CSS variables on raw canvas styles).
@@ -57,7 +58,17 @@ function basename(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-export function GraphCanvas({ files, edges, onReady }: Props) {
+// Map edge.lines.length → cytoscape edge width. Mentions get a wider line as
+// the count grows so the graph hints at relation "weight" before the user
+// hovers; imports stay at a single fixed width since duplicate @-imports are
+// rare and the colour already separates them.
+function edgeWidth(kind: string, count: number): number {
+  if (kind === "import") return 1.6;
+  // mention: base 0.9, +0.5 per extra ref, cap at 3.
+  return Math.min(0.9 + 0.5 * Math.max(0, count - 1), 3);
+}
+
+export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -68,6 +79,11 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
     () => useStore.subscribe((s) => { pinsRef.current = s.pins; }),
     [],
   );
+
+  // Latest onHoverEdge in a ref — keeps the cy handler stable across parent
+  // re-renders without forcing the whole graph to rebuild.
+  const onHoverEdgeRef = useRef(onHoverEdge);
+  onHoverEdgeRef.current = onHoverEdge;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -105,6 +121,8 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
           source: e.source,
           target: e.target,
           kind: e.kind,
+          count: e.lines.length,
+          width: edgeWidth(e.kind, e.lines.length),
         },
       })),
     ];
@@ -141,7 +159,7 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
           style: {
             "line-color": C.amber,
             "target-arrow-color": C.amber,
-            width: 1.6,
+            width: "data(width)",
             "curve-style": "bezier",
             opacity: 0.85,
           },
@@ -151,7 +169,7 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
           style: {
             "line-color": C.teal,
             "target-arrow-color": C.teal,
-            width: 0.9,
+            width: "data(width)",
             "curve-style": "bezier",
             opacity: 0.55,
           },
@@ -273,6 +291,19 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
     });
     cy.on("tap", (e) => {
       if (e.target === cy) useStore.getState().select(null);
+    });
+
+    // Edge hover: hand the original Edge back to the parent so MapView can
+    // render the EdgeInfo card. We look up by id in the prop array because
+    // cytoscape data() only carries the flat scalars needed for styling.
+    const edgeIndex = new Map(edges.map((edge) => [edge.id, edge]));
+    cy.on("mouseover", "edge", (e) => {
+      const id = (e.target as cytoscape.EdgeSingular).id();
+      const found = edgeIndex.get(id);
+      if (found) onHoverEdgeRef.current?.(found);
+    });
+    cy.on("mouseout", "edge", () => {
+      onHoverEdgeRef.current?.(null);
     });
 
     cyRef.current = cy;
