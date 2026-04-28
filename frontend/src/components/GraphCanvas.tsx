@@ -3,13 +3,15 @@ import cytoscape from "cytoscape";
 // @ts-expect-error — cola has no bundled types
 import cola from "cytoscape-cola";
 import { useStore } from "../state/store";
-import type { Edge, FileEntry } from "../types";
+import type { Edge, FileEntry, FileKind } from "../types";
+import { ICON_BY_KIND, isIconKind } from "./nodeIcons";
 
 cytoscape.use(cola);
 
 interface Props {
   files: FileEntry[];
   edges: Edge[];
+  onReady?: (cy: cytoscape.Core | null) => void;
 }
 
 // Tokens (kept here for cytoscape — JS can't read CSS variables on raw canvas styles).
@@ -19,37 +21,34 @@ const C = {
   paperFaint: "#6e6a5e",
   amber: "#f0a83a",
   teal: "#5da39a",
-  plum: "#8a6ca0",
-  lime: "#c7e36b",
-  rust: "#cf6747",
   ink2: "#111116",
 };
 
-function nodeColor(f: FileEntry): string {
-  if (f.kind === "memory") {
-    const t = (f.frontmatter as { type?: string } | null)?.type;
-    if (t === "feedback")  return C.rust;
-    if (t === "project")   return C.plum;
-    if (t === "user")      return C.lime;
-    return C.teal; // reference + unknown
-  }
-  switch (f.kind) {
-    case "claude_md":       return C.paper;
-    case "rule":            return C.amber;
-    case "memory_index":    return C.amber;
-    case "skill":           return C.plum;
-    case "plugin_manifest": return C.plum;
-    case "plugin_registry": return C.paperFaint;
-    case "mcp":             return C.lime;
-    case "settings":        return C.paperFaint;
-    case "automemory":      return C.paperFaint;
+// Step 2.5: kind-as-category colour (no more memory-by-frontmatter-type).
+// Icon kinds use a dark fill so the paper-coloured lucide icon overlay reads.
+function nodeColor(kind: FileKind): string {
+  switch (kind) {
+    case "claude_md":
+    case "rule":
+      return C.amber;
+    case "memory":
+    case "memory_index":
+      return C.paper;
+    default:
+      return C.ink2;
   }
 }
 
-function nodeSize(f: FileEntry): number {
-  if (f.kind === "memory_index") return 22;
-  if (f.kind === "claude_md")    return 18;
-  return 12;
+const SIZE_MIN = 15;
+const SIZE_MAX = 31;
+const ICON_SIZE = 23;
+
+// sqrt-scaled size for colored-circle nodes; flat 23px for icon nodes.
+function nodeSize(kind: FileKind, inDeg: number, maxInDeg: number): number {
+  if (isIconKind(kind)) return ICON_SIZE;
+  if (maxInDeg <= 0) return SIZE_MIN;
+  const t = Math.sqrt(inDeg / maxInDeg);
+  return SIZE_MIN + (SIZE_MAX - SIZE_MIN) * t;
 }
 
 function basename(p: string): string {
@@ -57,7 +56,7 @@ function basename(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-export function GraphCanvas({ files, edges }: Props) {
+export function GraphCanvas({ files, edges, onReady }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -74,15 +73,30 @@ export function GraphCanvas({ files, edges }: Props) {
 
     const initialPins = pinsRef.current;
 
+    // Inbound count is per-target across both edge kinds. Max is taken only
+    // over colored-circle nodes so a heavily-referenced icon kind can't
+    // shrink the colored cohort.
+    const inDeg: Record<string, number> = {};
+    for (const e of edges) {
+      inDeg[e.target] = (inDeg[e.target] ?? 0) + 1;
+    }
+    let maxInDeg = 0;
+    for (const f of files) {
+      if (!isIconKind(f.kind)) {
+        const d = inDeg[f.id] ?? 0;
+        if (d > maxInDeg) maxInDeg = d;
+      }
+    }
+
     const elements: cytoscape.ElementDefinition[] = [
       ...files.map((f) => ({
         data: {
           id: f.id,
           label: basename(f.path),
           kind: f.kind,
-          color: nodeColor(f),
-          size: nodeSize(f),
-          locked: f.kind === "automemory" ? 1 : 0,
+          color: nodeColor(f.kind),
+          size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),
+          iconUrl: ICON_BY_KIND[f.kind] ?? "",
         },
       })),
       ...edges.map((e) => ({
@@ -104,6 +118,14 @@ export function GraphCanvas({ files, edges }: Props) {
           selector: "node",
           style: {
             "background-color": "data(color)",
+            "background-image": "data(iconUrl)",
+            "background-fit": "none",
+            "background-clip": "none",
+            "background-width": "65%",
+            "background-height": "65%",
+            "background-position-x": "50%",
+            "background-position-y": "50%",
+            "background-image-opacity": 1,
             width: "data(size)",
             height: "data(size)",
             label: "data(label)",
@@ -117,15 +139,6 @@ export function GraphCanvas({ files, edges }: Props) {
             "border-width": 0,
             "transition-property": "opacity, border-width, border-color",
             "transition-duration": 120,
-          },
-        },
-        {
-          selector: "node[locked = 1]",
-          style: {
-            "border-width": 1,
-            "border-style": "dashed",
-            "border-color": C.paperFaint,
-            opacity: 0.55,
           },
         },
         {
@@ -177,14 +190,6 @@ export function GraphCanvas({ files, edges }: Props) {
           },
         },
         {
-          selector: "node.pinned",
-          style: {
-            "border-width": 2,
-            "border-color": C.amber,
-            "border-style": "solid",
-          },
-        },
-        {
           selector: "node:selected",
           style: {
             "border-width": 2,
@@ -206,7 +211,9 @@ export function GraphCanvas({ files, edges }: Props) {
       } as cytoscape.LayoutOptions,
     });
 
-    // Snap initially-persisted pins to their saved positions.
+    // Snap initially-persisted pins to their saved positions. The .pinned
+    // class is functional (drag-time neighbour filter), not visual — the
+    // pushpin glyph lives in <PinOverlay>.
     for (const [id, pos] of Object.entries(initialPins)) {
       const n = cy.getElementById(id);
       if (n.nonempty()) n.position(pos).addClass("pinned");
@@ -277,11 +284,13 @@ export function GraphCanvas({ files, edges }: Props) {
     });
 
     cyRef.current = cy;
+    onReady?.(cy);
     return () => {
+      onReady?.(null);
       cy.destroy();
       cyRef.current = null;
     };
-  }, [files, edges]);
+  }, [files, edges, onReady]);
 
   return (
     <div
