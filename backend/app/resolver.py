@@ -16,8 +16,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-import pathspec
-
 from . import config, scanner
 from .models import Edge, FileEntry, Issue, PathsStatus
 from .parser import ParsedFile, file_id, parse_json_only_metadata, parse_markdown
@@ -144,43 +142,6 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
     # mentions on the same line — stays one edge with one line number, and
     # multi-line repeats become one edge with N line numbers.
     edge_acc: dict[tuple[str, str, str], set[int]] = defaultdict(set)
-
-    # Synthetic edges: `installed_plugins.json` doesn't have a body the parser
-    # can scan — it's a JSON registry. But the file IS a directed reference at
-    # every plugin it lists. Surface that on the graph by emitting one
-    # `import`-style edge per plugin entry, targeting the plugin's representative
-    # file (plugin.json or README.md, whichever the scanner picked).
-    parsed_paths = {q.raw_path for q in parsed}
-    for p in parsed:
-        if p.kind != "plugin_registry":
-            continue
-        try:
-            import json
-            with p.raw_path.open("r", encoding="utf-8") as f:
-                reg = json.load(f)
-        except (OSError, ValueError):
-            continue
-        plugins_obj = reg.get("plugins") if isinstance(reg, dict) else None
-        if not isinstance(plugins_obj, dict):
-            continue
-        reg_id = file_id(p.raw_path)
-        for entries in plugins_obj.values():
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                ip = entry.get("installPath")
-                if not isinstance(ip, str) or not ip:
-                    continue
-                base = Path(ip)
-                target = base / ".claude-plugin" / "plugin.json"
-                if target not in parsed_paths:
-                    target = base / "README.md"
-                if target not in parsed_paths:
-                    continue
-                tgt_id = hashlib.sha1(str(target).encode("utf-8")).hexdigest()
-                edge_acc[(reg_id, tgt_id, "import")]  # ensure key exists, no line
 
     for p in parsed:
         fid = file_id(p.raw_path)
