@@ -97,9 +97,10 @@ const PinDefs = memo(function PinDefs() {
       aria-hidden
     >
       <defs>
+        {/* Light-on-dark gradient: highlight = paper-dim, shadow = line. */}
         <linearGradient id="obs-pinhead" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#23232c" />
-          <stop offset="100%" stopColor="#0b0b0e" />
+          <stop offset="0%" stopColor="#b9b4a6" />
+          <stop offset="100%" stopColor="#23232c" />
         </linearGradient>
       </defs>
     </svg>
@@ -116,13 +117,13 @@ function Pushpin() {
     >
       <path
         d="M11 14.5 L8.5 24"
-        stroke="#1a1a22"
+        stroke="#6e6a5e"
         strokeWidth="1.6"
         strokeLinecap="round"
         fill="none"
       />
       <circle cx="11" cy="9" r="6" fill="url(#obs-pinhead)" />
-      <ellipse cx="9" cy="7.5" rx="1.8" ry="1.2" fill="#6e6a5e" opacity="0.45" />
+      <ellipse cx="8.5" cy="7" rx="2" ry="1.4" fill="#e8e4d8" opacity="0.55" />
     </svg>
   );
 }

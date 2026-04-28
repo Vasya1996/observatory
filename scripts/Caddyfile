@@ -14,6 +14,11 @@
 }
 
 :9000 {
+	log {
+		output file /tmp/observatory-caddy-access.log
+		level INFO
+	}
+
 	basic_auth {
 		vasya $2a$14$nP0fwMO82f/simcARci4seF3cvbUAQgboRhTgYVTU0WNQSk4QgZ5a
 	}

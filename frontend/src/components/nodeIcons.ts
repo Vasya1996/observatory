@@ -9,9 +9,14 @@ import type { FileKind } from "../types";
 const STROKE = "#e8e4d8"; // --paper
 const STROKE_WIDTH = 1.6;
 
+// viewBox is enlarged from 0 0 24 24 to -5 -5 34 34 — adds 5 units of
+// transparent padding on every side. With background-fit: contain on a
+// circle node, the SVG bbox fills the node's inner square; that padding
+// pushes the actual icon content inside the inscribed circle so no path
+// can spill past the rim.
 function dataUrl(inner: string): string {
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 34 34" fill="none" ` +
     `stroke="${STROKE}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" ` +
     `stroke-linejoin="round">${inner}</svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;

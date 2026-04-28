@@ -21,11 +21,12 @@ const C = {
   paperFaint: "#6e6a5e",
   amber: "#f0a83a",
   teal: "#5da39a",
-  ink2: "#111116",
+  // Icon-node fill — uses --line (not --ink-2) so the dark circle stays
+  // visibly distinct from the page bg (--ink #0b0b0e).
+  iconBg: "#23232c",
 };
 
 // Step 2.5: kind-as-category colour (no more memory-by-frontmatter-type).
-// Icon kinds use a dark fill so the paper-coloured lucide icon overlay reads.
 function nodeColor(kind: FileKind): string {
   switch (kind) {
     case "claude_md":
@@ -35,13 +36,13 @@ function nodeColor(kind: FileKind): string {
     case "memory_index":
       return C.paper;
     default:
-      return C.ink2;
+      return C.iconBg;
   }
 }
 
 const SIZE_MIN = 15;
 const SIZE_MAX = 31;
-const ICON_SIZE = 23;
+const ICON_SIZE = 36;
 
 // sqrt-scaled size for colored-circle nodes; flat 23px for icon nodes.
 function nodeSize(kind: FileKind, inDeg: number, maxInDeg: number): number {
@@ -118,14 +119,6 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
           selector: "node",
           style: {
             "background-color": "data(color)",
-            "background-image": "data(iconUrl)",
-            "background-fit": "none",
-            "background-clip": "none",
-            "background-width": "65%",
-            "background-height": "65%",
-            "background-position-x": "50%",
-            "background-position-y": "50%",
-            "background-image-opacity": 1,
             width: "data(size)",
             height: "data(size)",
             label: "data(label)",
@@ -139,6 +132,19 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
             "border-width": 0,
             "transition-property": "opacity, border-width, border-color",
             "transition-duration": 120,
+          },
+        },
+        {
+          // Icon kinds: lucide glyph centred inside the circle. The SVG
+          // sources expand the viewBox to -5 -5 34 34 (see nodeIcons.ts)
+          // so background-fit: contain places the icon fully inside the
+          // inscribed circle without any rim overflow.
+          selector:
+            'node[kind = "skill"], node[kind = "plugin_manifest"], node[kind = "plugin_registry"], node[kind = "mcp"], node[kind = "settings"], node[kind = "automemory"]',
+          style: {
+            "background-image": "data(iconUrl)",
+            "background-fit": "contain",
+            "background-image-opacity": 1,
           },
         },
         {
