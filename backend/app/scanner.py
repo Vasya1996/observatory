@@ -158,10 +158,14 @@ def scan() -> list[RawFile]:
     # ignored for now; surfacing them needs a separate UX decision.
     out.extend(_scan_user_plugins(plugin_registry))
 
-    # Settings.
-    settings = config.CLAUDE_DIR / "settings.json"
-    if _exists_file(settings):
-        out.append(RawFile(settings, "settings"))
+    # Settings — global + machine-local. Both can carry hook/statusLine
+    # definitions; the resolver merges hook refs from either source.
+    for settings_file in [
+        config.CLAUDE_DIR / "settings.json",
+        config.CLAUDE_DIR / "settings.local.json",
+    ]:
+        if _exists_file(settings_file):
+            out.append(RawFile(settings_file, "settings"))
 
     # MCP.
     mcp = config.CLAUDE_DIR / ".mcp.json"

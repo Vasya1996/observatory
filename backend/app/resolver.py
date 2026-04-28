@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-from . import config, scanner
+from . import config, hooks, scanner
 from .models import Edge, FileEntry, Issue, PathsStatus
 from .parser import ParsedFile, file_id, parse_json_only_metadata, parse_markdown
 
@@ -236,6 +236,98 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
             )
         )
 
+    # Hook edges: walk every settings/hooks JSON file (and any plugin's
+    # `hooks/hooks.json`), resolve each command to a file path, emit a
+    # `hook` edge with the lifecycle event names. Targets that exist on disk
+    # but aren't otherwise scanned become `script` leaf nodes here so the
+    # graph can show what code actually runs at lifecycle events.
+    parsed_paths = {q.raw_path for q in parsed}
+    hook_acc: dict[tuple[str, str], set[str]] = defaultdict(set)
+    extra_script_entries: dict[Path, FileEntry] = {}
+
+    def _ensure_script_node(path: Path) -> str:
+        """Return the file_id for a script target, creating a synthetic
+        FileEntry if the path isn't already a scanned file or a previously
+        emitted script leaf."""
+        if path in parsed_paths:
+            return file_id(path)
+        if path in extra_script_entries:
+            return extra_script_entries[path].id
+        try:
+            stat = path.stat()
+            mtime = stat.st_mtime
+            size = stat.st_size
+        except OSError:
+            mtime, size = 0.0, 0
+        try:
+            line_count = sum(1 for _ in path.open("r", encoding="utf-8", errors="replace"))
+        except OSError:
+            line_count = 0
+        sid = file_id(path)
+        extra_script_entries[path] = FileEntry(
+            id=sid,
+            path=str(path),
+            display=_collapse(path),
+            kind="script",
+            scope=None,
+            frontmatter=None,
+            paths_globs=None,
+            paths_status="n_a",
+            readonly=True,
+            mtime=mtime,
+            size_bytes=size,
+            line_count=line_count,
+            validation=[],
+            display_name=None,
+            cached_versions=1,
+        )
+        return sid
+
+    # Each settings.json / settings.local.json kind="settings" file is itself
+    # the source of a hook edge. Plugin hooks.json entries source their edges
+    # from the plugin's representative file (since hooks.json isn't a node).
+    for p in parsed:
+        plugin_root: Optional[Path] = None
+        sources: list[tuple[Path, Optional[Path]]] = []  # (json_path, plugin_root)
+        if p.kind == "settings":
+            sources.append((p.raw_path, None))
+        elif p.kind == "plugin_manifest":
+            # Locate the plugin tree root and look for hooks/hooks.json there.
+            # For .../manifest.json or .../README.md the tree is the parent dir;
+            # for .../.claude-plugin/plugin.json the tree is the grandparent.
+            if p.raw_path.parent.name == ".claude-plugin":
+                plugin_root = p.raw_path.parent.parent
+            else:
+                plugin_root = p.raw_path.parent
+            hooks_json = plugin_root / "hooks" / "hooks.json"
+            if hooks_json.is_file():
+                sources.append((hooks_json, plugin_root))
+        if not sources:
+            continue
+        for json_path, root in sources:
+            for ref in hooks.extract(json_path, plugin_root=root):
+                if ref.target_path is None:
+                    p.issues.append(
+                        Issue(
+                            severity="info",
+                            code="hook_target_unresolved",
+                            message=(
+                                f"Hook command target could not be resolved: "
+                                f"{ref.raw_command!r} (event: {ref.event})"
+                            ),
+                        )
+                    )
+                    continue
+                tgt_id = _ensure_script_node(ref.target_path)
+                src_id = file_id(p.raw_path)
+                if tgt_id == src_id:
+                    continue
+                hook_acc[(src_id, tgt_id)].add(ref.event)
+
+    # Append script-leaf entries before materialising edges so /api/index
+    # returns a coherent (files, edges) pair.
+    files.extend(extra_script_entries.values())
+
     # Materialise aggregated refs into one Edge per (source, target, kind).
     # `lines` carries the full set of source-lines the inspector can show
     # ("references appear on lines 3, 47, 112"); the graph still draws a single
@@ -250,6 +342,17 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
         )
         for (src, tgt, kind), line_set in edge_acc.items()
     ]
+    edges.extend(
+        Edge(
+            id=f"{src}:{tgt}:hook",
+            source=src,
+            target=tgt,
+            kind="hook",
+            lines=[],
+            events=sorted(events),
+        )
+        for (src, tgt), events in hook_acc.items()
+    )
     edges.sort(key=lambda e: (e.source, e.target, e.kind))
 
     return files, edges

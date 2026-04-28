@@ -17,6 +17,9 @@ const SETTINGS = `<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 
 // icons. The earlier "centroid (12, 14.5)" reading missed the arc and led to
 // a viewBox shift `0 2.5 24 24` that itself moved the icon off-centre.
 const LOCK = `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`;
+// Lucide `code-xml` (rebrand of code2): the `</>` glyph for shell/python/etc
+// scripts referenced from a hook command. Centroid (12, 12) by construction.
+const CODE = `<path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/>`;
 
 export const ICON_PATH_BY_KIND: Partial<Record<FileKind, string>> = {
   skill: SCROLL,
@@ -25,6 +28,7 @@ export const ICON_PATH_BY_KIND: Partial<Record<FileKind, string>> = {
   mcp: PLUG,
   settings: SETTINGS,
   automemory: LOCK,
+  script: CODE,
 };
 
 export function isIconKind(k: FileKind): boolean {

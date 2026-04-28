@@ -22,6 +22,9 @@ const C = {
   paperFaint: "#6e6a5e",
   amber: "#f0a83a",
   teal: "#5da39a",
+  // Hook edges: rose tint, third semantic separate from amber/teal so the
+  // graph can carry three relation types at a glance.
+  rose: "#e89bb0",
   // Icon-node fill — uses --line (not --ink-2) so the dark circle stays
   // visibly distinct from the page bg (--ink #0b0b0e).
   iconBg: "#23232c",
@@ -71,9 +74,11 @@ function nodeLabel(f: FileEntry): string {
 // Map edge.lines.length → cytoscape edge width. Mentions get a wider line as
 // the count grows so the graph hints at relation "weight" before the user
 // hovers; imports stay at a single fixed width since duplicate @-imports are
-// rare and the colour already separates them.
+// rare and the colour already separates them. Hooks: fixed width — multi-event
+// hooks for the same target are one connection, not a "weight" signal.
 function edgeWidth(kind: string, count: number): number {
   if (kind === "import") return 1.6;
+  if (kind === "hook") return 1.6;
   // mention: base 0.9, +0.5 per extra ref, cap at 3.
   return Math.min(0.9 + 0.5 * Math.max(0, count - 1), 3);
 }
@@ -182,6 +187,16 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
             width: "data(width)",
             "curve-style": "bezier",
             opacity: 0.55,
+          },
+        },
+        {
+          selector: 'edge[kind = "hook"]',
+          style: {
+            "line-color": C.rose,
+            "target-arrow-color": C.rose,
+            width: "data(width)",
+            "curve-style": "bezier",
+            opacity: 0.85,
           },
         },
         // Badge: only on mention edges with >1 ref. Count signals duplicate

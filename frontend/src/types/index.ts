@@ -10,9 +10,10 @@ export type FileKind =
   | "plugin_registry"
   | "mcp"
   | "settings"
-  | "automemory";
+  | "automemory"
+  | "script";
 
-export type EdgeKind = "import" | "mention";
+export type EdgeKind = "import" | "mention" | "hook";
 
 export type ViewKey = "map" | "sim" | "ed" | "ext";
 
@@ -52,6 +53,8 @@ export interface Edge {
   // Source-lines where the relation appears. `lines.length` = number of
   // distinct mention/import call-sites in `source` pointing at `target`.
   lines: number[];
+  // Lifecycle event names for kind="hook" only (e.g. ["PreToolUse"]).
+  events?: string[];
 }
 
 export interface IndexResponse {

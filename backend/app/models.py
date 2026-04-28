@@ -16,9 +16,13 @@ FileKind = Literal[
     "mcp",
     "settings",
     "automemory",
+    # Shell/Python script invoked by a hook command (e.g. PreToolUse,
+    # statusLine). Surfaced as a leaf node so the user can see what code
+    # actually runs at session lifecycle events.
+    "script",
 ]
 
-EdgeKind = Literal["import", "mention"]
+EdgeKind = Literal["import", "mention", "hook"]
 PathsStatus = Literal["ok", "missing", "n_a"]
 IssueSeverity = Literal["info", "warning", "error"]
 TimelineStatus = Literal["loaded", "conditional", "skipped"]
@@ -65,6 +69,11 @@ class Edge(BaseModel):
     # so the inspector can list "MEMORY references user.md from lines 3, 47, 112"
     # while the graph stays one-line-per-relation.
     lines: list[int] = Field(default_factory=list)
+    # Hook lifecycle events that trigger this edge — only populated for
+    # `kind == "hook"`. e.g. ["PreToolUse", "PostToolUse"], ["statusLine"],
+    # ["Stop"]. Multi-event hooks pointing at the same target collapse into
+    # one edge with all event names preserved.
+    events: list[str] = Field(default_factory=list)
 
 
 class IndexResponse(BaseModel):
