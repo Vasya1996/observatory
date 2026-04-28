@@ -9,18 +9,18 @@ import type { FileKind } from "../types";
 const STROKE = "#e8e4d8"; // --paper
 const STROKE_WIDTH = 1.6;
 
-// Standard Lucide viewBox 0 0 24 24, no padding. The earlier -8 -8 40 40
-// padded ring shrunk the glyph to ~60% of the inscribed circle, leaving
-// enough empty rim that the eye read the icon as floating high in the
-// circle — even though the geometric centre was correct. Lucide glyphs at
-// the canonical viewBox stay inside the inscribed circle of a 36px ellipse
-// node (max corner distance from centre ≈ 11px in element space, well
-// under the 18px circle radius).
-function dataUrl(inner: string): string {
+// Standard Lucide viewBox 0 0 24 24. Optional per-icon `translate(0 dy)`
+// shifts the glyph vertically inside the viewBox to compensate for asymmetric
+// visual mass — Lucide's plug has two long prongs at top and a single short
+// cable at bottom, so the geometric centre at y=12 sits visibly above the
+// visual mass centre. Plug needs a +2 nudge down; lock (heavy body, light
+// shackle) needs a -3 nudge up. Symmetric glyphs (gear, scroll) need none.
+function dataUrl(inner: string, dy: number = 0): string {
+  const content = dy === 0 ? inner : `<g transform="translate(0 ${dy})">${inner}</g>`;
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ` +
     `stroke="${STROKE}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" ` +
-    `stroke-linejoin="round">${inner}</svg>`;
+    `stroke-linejoin="round">${content}</svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
@@ -31,11 +31,11 @@ const LOCK = `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="
 
 export const ICON_BY_KIND: Partial<Record<FileKind, string>> = {
   skill:           dataUrl(SCROLL),
-  plugin_manifest: dataUrl(PLUG),
-  plugin_registry: dataUrl(PLUG),
-  mcp:             dataUrl(PLUG),
+  plugin_manifest: dataUrl(PLUG, 2),
+  plugin_registry: dataUrl(PLUG, 2),
+  mcp:             dataUrl(PLUG, 2),
   settings:        dataUrl(SETTINGS),
-  automemory:      dataUrl(LOCK),
+  automemory:      dataUrl(LOCK, -3),
 };
 
 export function isIconKind(k: FileKind): boolean {
