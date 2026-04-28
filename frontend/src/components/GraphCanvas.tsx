@@ -174,6 +174,28 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
             opacity: 0.55,
           },
         },
+        // Badge: only on mention edges with >1 ref. Count signals duplicate
+        // mentions in the source document — a candidate for cleanup. Native
+        // cytoscape label with text-background draws a small chip at the
+        // edge midpoint; horizontal (no autorotate) so the digit stays
+        // legible regardless of edge angle.
+        {
+          selector: 'edge[kind = "mention"][count > 1]',
+          style: {
+            label: "data(count)",
+            "font-family": '"JetBrains Mono", monospace',
+            "font-size": 9,
+            color: C.paper,
+            "text-background-color": "#23232c",
+            "text-background-opacity": 0.95,
+            "text-background-padding": "2px",
+            "text-background-shape": "roundrectangle",
+            "text-border-color": C.paperFaint,
+            "text-border-width": 0.5,
+            "text-border-opacity": 1,
+            "text-events": "no",
+          },
+        },
         // Hover dimming (locked design #14).
         {
           selector: ".dim",
