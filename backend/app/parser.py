@@ -44,6 +44,14 @@ class ParsedFile:
     refs: list[ParsedRef]
     issues: list[Issue] = field(default_factory=list)
     raw_description_token: Optional[str] = None  # for SKILL.md folded-scalar check
+    # Human-readable label sourced from the file's own metadata, NOT its
+    # filesystem basename. For plugin manifests under
+    # `~/.claude/remote/plugins/<hash>/manifest.json`, the basename is the
+    # opaque string "manifest.json" — Claude itself identifies these by the
+    # plugin name from `.claude-plugin/plugin.json` (e.g. "anthropic-skills",
+    # "design"). When set, the graph and inspector show this instead of the
+    # basename. None = fall back to basename.
+    display_name: Optional[str] = None
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
@@ -249,6 +257,26 @@ def parse_markdown(
     )
 
 
+def _plugin_display_name(manifest_path: Path) -> Optional[str]:
+    """For `~/.claude/remote/plugins/<hash>/manifest.json`, look up the
+    sibling `.claude-plugin/plugin.json` and return its `name` field. That is
+    how Claude itself identifies the plugin (e.g. "anthropic-skills",
+    "design") — the manifest.json basename alone is opaque and identical
+    across every snapshot. Returns None if the sibling file is missing or
+    unparseable."""
+    sibling = manifest_path.parent / ".claude-plugin" / "plugin.json"
+    if not sibling.is_file():
+        return None
+    try:
+        import json
+        with sibling.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    name = data.get("name") if isinstance(data, dict) else None
+    return name if isinstance(name, str) and name else None
+
+
 def parse_json_only_metadata(path: Path, kind: FileKind, readonly: bool) -> ParsedFile:
     """JSON files: no parsing of contents into refs, just metadata."""
     text = ""
@@ -258,6 +286,7 @@ def parse_json_only_metadata(path: Path, kind: FileKind, readonly: bool) -> Pars
         line_count = text.count("\n") + (0 if text.endswith("\n") else 1) if text else 0
     except OSError:
         pass
+    display_name = _plugin_display_name(path) if kind == "plugin_manifest" else None
     return ParsedFile(
         raw_path=path,
         kind=kind,
@@ -268,4 +297,5 @@ def parse_json_only_metadata(path: Path, kind: FileKind, readonly: bool) -> Pars
         line_count=line_count,
         refs=[],
         issues=[],
+        display_name=display_name,
     )

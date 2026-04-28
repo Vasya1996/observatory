@@ -229,6 +229,7 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
                 size_bytes=size,
                 line_count=p.line_count,
                 validation=p.issues,
+                display_name=p.display_name,
             )
         )
 

@@ -58,6 +58,16 @@ function basename(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
+// Graph label: prefer the metadata-derived display_name (plugin name from
+// .claude-plugin/plugin.json) over the filesystem basename, since the basename
+// for every plugin manifest is just "manifest.json" and that drowns the graph
+// in identical labels. Falls back to basename for everything else.
+function nodeLabel(f: FileEntry): string {
+  return f.display_name && f.display_name.length > 0
+    ? f.display_name
+    : basename(f.path);
+}
+
 // Map edge.lines.length → cytoscape edge width. Mentions get a wider line as
 // the count grows so the graph hints at relation "weight" before the user
 // hovers; imports stay at a single fixed width since duplicate @-imports are
@@ -109,7 +119,7 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
       ...files.map((f) => ({
         data: {
           id: f.id,
-          label: basename(f.path),
+          label: nodeLabel(f),
           kind: f.kind,
           color: nodeColor(f.kind),
           size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),

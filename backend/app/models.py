@@ -45,6 +45,10 @@ class FileEntry(BaseModel):
     size_bytes: int
     line_count: int
     validation: list[Issue] = Field(default_factory=list)
+    # Plugin manifests get the plugin's real name (from `.claude-plugin/plugin.json`)
+    # so the graph doesn't show 24+ identical "manifest.json" labels. None for
+    # files whose basename is already informative.
+    display_name: Optional[str] = None
 
 
 class Edge(BaseModel):

@@ -37,6 +37,9 @@ export interface FileEntry {
   size_bytes: number;
   line_count: number;
   validation: Issue[];
+  // Plugin name from `.claude-plugin/plugin.json` for plugin_manifest files;
+  // null for everything else. UI uses this in place of basename(path).
+  display_name?: string | null;
 }
 
 export interface Edge {

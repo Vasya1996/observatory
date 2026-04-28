@@ -10,6 +10,12 @@ function basename(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
+function fileLabel(f: FileEntry): string {
+  return f.display_name && f.display_name.length > 0
+    ? f.display_name
+    : basename(f.display);
+}
+
 // Floating info card for a hovered edge. Sits bottom-left of the map canvas
 // so it doesn't follow the cursor (would need mousemove tracking) but stays
 // readable at a glance. Shows direction, kind, count, and the source lines
@@ -47,11 +53,11 @@ export function EdgeInfo({ edge, files }: Props) {
       }}
     >
       <div style={{ color: "#b9b4a6" }}>
-        <span>{basename(src.display)}</span>
+        <span>{fileLabel(src)}</span>
         <span style={{ margin: "0 6px", color: edge.kind === "import" ? "#f0a83a" : "#5da39a" }}>
           {edge.kind === "import" ? "→ @import →" : "→ mention →"}
         </span>
-        <span>{basename(tgt.display)}</span>
+        <span>{fileLabel(tgt)}</span>
       </div>
       <div style={{ color: "#6e6a5e", marginTop: 2 }}>
         {count} {edge.kind === "import" ? "import" : "mention"}
