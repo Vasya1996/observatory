@@ -9,16 +9,16 @@ import type { FileKind } from "../types";
 const STROKE = "#e8e4d8"; // --paper
 const STROKE_WIDTH = 1.6;
 
-// viewBox is enlarged from 0 0 24 24 to -8 -8 40 40 — adds 8 units of
-// transparent padding on every side (~33% of the original content
-// dimension). With background-fit: contain on a circle node, the SVG bbox
-// fills the node's inner square; the padding ring keeps the actual icon
-// content well inside the inscribed circle, so the visually densest
-// glyphs (lucide Plug at y=2..22) sit clearly centred without rim
-// overflow.
+// Standard Lucide viewBox 0 0 24 24, no padding. The earlier -8 -8 40 40
+// padded ring shrunk the glyph to ~60% of the inscribed circle, leaving
+// enough empty rim that the eye read the icon as floating high in the
+// circle — even though the geometric centre was correct. Lucide glyphs at
+// the canonical viewBox stay inside the inscribed circle of a 36px ellipse
+// node (max corner distance from centre ≈ 11px in element space, well
+// under the 18px circle radius).
 function dataUrl(inner: string): string {
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-8 -8 40 40" fill="none" ` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ` +
     `stroke="${STROKE}" stroke-width="${STROKE_WIDTH}" stroke-linecap="round" ` +
     `stroke-linejoin="round">${inner}</svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;

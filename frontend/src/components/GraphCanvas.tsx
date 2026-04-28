@@ -135,10 +135,6 @@ export function GraphCanvas({ files, edges, onReady }: Props) {
           },
         },
         {
-          // Icon kinds: lucide glyph centred inside the circle. The SVG
-          // sources expand the viewBox to -5 -5 34 34 (see nodeIcons.ts)
-          // so background-fit: contain places the icon fully inside the
-          // inscribed circle without any rim overflow.
           selector:
             'node[kind = "skill"], node[kind = "plugin_manifest"], node[kind = "plugin_registry"], node[kind = "mcp"], node[kind = "settings"], node[kind = "automemory"]',
           style: {
