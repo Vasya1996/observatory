@@ -42,7 +42,7 @@ function nodeColor(kind: FileKind): string {
 
 const SIZE_MIN = 15;
 const SIZE_MAX = 31;
-const ICON_SIZE = 36;
+const ICON_SIZE = 28;
 
 // sqrt-scaled size for colored-circle nodes; flat 23px for icon nodes.
 function nodeSize(kind: FileKind, inDeg: number, maxInDeg: number): number {

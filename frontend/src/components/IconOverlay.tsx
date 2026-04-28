@@ -14,9 +14,9 @@ interface Props {
 // Renders icon-kind glyphs as a sibling DOM layer above the cytoscape canvas,
 // anchored to each node's renderedPosition. Replaces the old `background-image:
 // data(iconUrl)` pipeline: cytoscape rasterises background SVGs onto its 2D
-// canvas at the node's pixel size, and a 36px node ÷ 24-unit viewBox = 1.5x
-// scale produced subpixel rounding that read as off-centre. DOM SVG keeps the
-// glyph as vector through the GPU compositor — pixel-honest at any zoom.
+// canvas at the node's pixel size, producing subpixel rounding that read as
+// off-centre. DOM SVG keeps the glyph as vector through the GPU compositor —
+// pixel-honest at any zoom.
 //
 // Same render scheme as PinOverlay: requestAnimationFrame-coalesced
 // re-renders on render/pan/zoom/drag, with `cy.destroyed()` guard in cleanup
@@ -76,6 +76,11 @@ export function IconOverlay({ cy }: Props) {
             top: 0,
             width: w,
             height: w,
+            // Inset SVG inside the node circle so the glyph doesn't press
+            // against the rim. ~14% padding leaves a ~3-4px dark ring at
+            // ICON_SIZE=28 — SVG ends up ~72% of the circle.
+            padding: w * 0.14,
+            boxSizing: "border-box",
             transform: `translate(${x - w / 2}px, ${y - w / 2}px)`,
             willChange: "transform",
           }}
