@@ -139,8 +139,10 @@ def _parse_imports_and_mentions(
     self_basename: str,
     self_path: str,
     skip_mentions: bool,
-) -> list[ParsedRef]:
+) -> tuple[list[ParsedRef], list[Issue]]:
     refs: list[ParsedRef] = []
+    issues: list[Issue] = []
+    seen_unresolved: set[tuple[int, str]] = set()
     in_fence = False
     home = Path.home()
     for offset, line in enumerate(body.splitlines()):
@@ -173,6 +175,12 @@ def _parse_imports_and_mentions(
         # to a canonical absolute path; only emitted when that path is in the
         # scanned set. Path tokens are unique (no basename ambiguity), so the
         # resolver can look up directly via the path map.
+        #
+        # Unresolved path-mentions (token doesn't resolve to any scanned file)
+        # surface as `mention_unresolved` info-issues — Mission section says
+        # silent omissions are the enemy. We classify by whether the file
+        # exists on disk (outside scan scope) or is missing entirely so the
+        # inspector can show a useful hint.
         for m in _PATH_MENTION_RE.finditer(line):
             raw = m.group(1)
             try:
@@ -184,12 +192,45 @@ def _parse_imports_and_mentions(
                 continue
             if canonical == self_path:
                 continue
-            if canonical not in in_scope_paths:
+            if canonical in in_scope_paths:
+                refs.append(
+                    ParsedRef(kind="mention", raw_target=canonical, line=line_num)
+                )
                 continue
-            refs.append(
-                ParsedRef(kind="mention", raw_target=canonical, line=line_num)
-            )
-    return refs
+            key = (line_num, raw)
+            if key in seen_unresolved:
+                continue
+            seen_unresolved.add(key)
+            try:
+                exists_on_disk = Path(canonical).is_file()
+            except OSError:
+                exists_on_disk = False
+            if exists_on_disk:
+                issues.append(
+                    Issue(
+                        severity="info",
+                        code="mention_path_outside_scope",
+                        message=(
+                            f"Mention `{raw}` points to a real file, but it's "
+                            f"outside the Observatory scan scope, so no graph "
+                            f"edge is drawn."
+                        ),
+                        line=line_num,
+                    )
+                )
+            else:
+                issues.append(
+                    Issue(
+                        severity="info",
+                        code="mention_path_missing",
+                        message=(
+                            f"Mention `{raw}` does not resolve — no such file "
+                            f"on disk. Likely a stale or renamed reference."
+                        ),
+                        line=line_num,
+                    )
+                )
+    return refs, issues
 
 
 def parse_markdown(
@@ -266,7 +307,7 @@ def parse_markdown(
                     )
                 )
 
-    refs = _parse_imports_and_mentions(
+    refs, ref_issues = _parse_imports_and_mentions(
         body=body,
         body_start_line=body_start_line,
         in_scope_basenames=in_scope_basenames,
@@ -276,6 +317,7 @@ def parse_markdown(
         # Auto-memory zone: render but don't extract outbound refs from it.
         skip_mentions=readonly or kind == "automemory",
     )
+    issues.extend(ref_issues)
     if readonly or kind == "automemory":
         # Strip imports too — auto-memory is a leaf.
         refs = []

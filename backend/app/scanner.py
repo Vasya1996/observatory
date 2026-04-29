@@ -186,7 +186,7 @@ def scan() -> list[RawFile]:
 
 
 def _scan_project_zone(cwd: Path) -> list[RawFile]:
-    """Surface the four project-level Claude config locations under `cwd`:
+    """Surface project-level Claude config locations under `cwd`:
 
     * `<cwd>/CLAUDE.md` — project-level top
     * `<cwd>/CLAUDE.local.md` — local-override sibling (deprecated by Claude
@@ -194,9 +194,15 @@ def _scan_project_zone(cwd: Path) -> list[RawFile]:
     * `<cwd>/.claude/CLAUDE.md` — team-shared project instructions
     * `<cwd>/.claude/rules/*.md` — project-level rules (paths: support same
       as user-level rules; resolver/parser are kind-driven, not path-driven)
+    * `<cwd>/<subdir>/CLAUDE.md` — nested per-subdirectory CLAUDE.md (per
+      Claude Code docs these load on-demand when reading files in that
+      subtree, NOT at session start). Surfaced as graph nodes so Vasya's
+      `~/Claude/{project,global}/CLAUDE.md` and any monorepo-style nested
+      CLAUDE.md become visible. Single level of `iterdir()` only — no deep
+      walk; node_modules / .git / etc don't get descended into because we
+      only probe direct subdirs for `CLAUDE.md` and stop.
 
-    Targeted reads only — no directory walks. Blacklist (rule #5) still
-    applies as a safety net.
+    Targeted reads only. Blacklist (rule #5) still applies.
     """
     out: list[RawFile] = []
     for p in [
@@ -209,6 +215,23 @@ def _scan_project_zone(cwd: Path) -> list[RawFile]:
     for p in _glob(cwd / ".claude" / "rules", "*.md"):
         if not config.is_blacklisted(p):
             out.append(RawFile(p, "rule"))
+    # Nested CLAUDE.md one level deeper. Dotted dirs (.git, .venv, .claude
+    # which is already covered above) are skipped — they're plumbing, never
+    # session targets.
+    try:
+        subdirs = list(cwd.iterdir())
+    except OSError:
+        subdirs = []
+    for sub in sorted(subdirs, key=lambda p: p.name):
+        if not sub.is_dir():
+            continue
+        if sub.name.startswith("."):
+            continue
+        if config.is_blacklisted(sub):
+            continue
+        nested = sub / "CLAUDE.md"
+        if _exists_file(nested):
+            out.append(RawFile(nested, "claude_md"))
     return out
 
 
@@ -302,10 +325,27 @@ def scan_roots() -> list[tuple[Path, bool]]:
     ]
     # Project-zone roots: top-level non-recursive (catches CLAUDE.md and
     # CLAUDE.local.md edits without watching the entire repo); the rules dir
-    # gets a separate recursive watch since it's small.
+    # gets a separate recursive watch since it's small. Subdirectories that
+    # already contain a nested CLAUDE.md also get a non-recursive watch so
+    # edits to those files trigger reindex without watching the whole repo
+    # tree (which would blow past inotify limits in repos with node_modules).
     for cwd in discover_cwds():
         candidates.append((cwd, False))
         candidates.append((cwd / ".claude" / "rules", True))
+        try:
+            subdirs = list(cwd.iterdir()) if cwd.is_dir() else []
+        except OSError:
+            subdirs = []
+        for sub in subdirs:
+            if not sub.is_dir() or sub.name.startswith("."):
+                continue
+            try:
+                if config.is_blacklisted(sub):
+                    continue
+            except OSError:
+                continue
+            if (sub / "CLAUDE.md").is_file():
+                candidates.append((sub, False))
     seen: set[Path] = set()
     out: list[tuple[Path, bool]] = []
     for c, recursive in candidates:
