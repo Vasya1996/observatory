@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type cytoscape from "cytoscape";
+import { CwdSelector } from "../components/CwdSelector";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { IconOverlay } from "../components/IconOverlay";
 import { PinOverlay } from "../components/PinOverlay";
@@ -66,6 +67,7 @@ export function MapView() {
       />
       <IconOverlay cy={cy} />
       <PinOverlay cy={cy} />
+      <CwdSelector />
       <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
     </div>
   );
