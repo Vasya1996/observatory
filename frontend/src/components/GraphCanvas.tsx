@@ -31,6 +31,15 @@ interface Props {
   // OR empty, cola runs as today. Per-node tweens between Map states are
   // wired in a separate effect below.
   positions?: Map<string, { x: number; y: number }> | null;
+  // Per-node zone assignment from buildTreePositions. Drives the tree-mode
+  // styling pass: orphan-zone fade, hook-edge gating to settings-internal,
+  // mention-edge "lianas" treatment. Null in graph mode (no zones).
+  zones?: Map<string, "user" | "project" | "settings" | "orphan"> | null;
+  // True when the parent is rendering the tree mode. Drives tree-only style
+  // overrides via class selectors (`.tree-mode` on every node + edge). Kept
+  // as an explicit prop because `positions?.size > 0` is technically the same
+  // signal but reads less clearly at the call site.
+  treeMode?: boolean;
 }
 
 // Tokens (kept here for cytoscape — JS can't read CSS variables on raw canvas styles).
@@ -102,7 +111,16 @@ function edgeWidth(kind: string, count: number): number {
   return Math.min(0.9 + 0.5 * Math.max(0, count - 1), 3);
 }
 
-export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap, positions }: Props) {
+export function GraphCanvas({
+  files,
+  edges,
+  onReady,
+  onHoverEdge,
+  statusMap,
+  positions,
+  zones,
+  treeMode,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -395,6 +413,63 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap, pos
         {
           selector: ".folded",
           style: { display: "none" },
+        },
+        // -----------------------------------------------------------------
+        // Tree-mode overrides (locked rule #34). Activated by toggling the
+        // `.tree-mode` class on every node + edge (handled by the dedicated
+        // effect below; class is removed when treeMode flips back to false).
+        //
+        // Mentions read as thin teal "lianas" connecting CLAUDE.md trunks
+        // across zones — unbundled-bezier so neighbouring mentions arc
+        // independently instead of stacking onto one straight line.
+        // -----------------------------------------------------------------
+        {
+          selector: 'edge[kind = "mention"].tree-mode',
+          style: {
+            "line-color": C.teal,
+            width: 1.2,
+            "curve-style": "unbundled-bezier",
+            "control-point-distances": [-30],
+            "control-point-weights": [0.5],
+            opacity: 0.4,
+          },
+        },
+        // Imports stay solid amber but sit a touch brighter than mentions so
+        // the user-zone @-import spine reads as the primary structure.
+        {
+          selector: 'edge[kind = "import"].tree-mode',
+          style: {
+            opacity: 0.7,
+          },
+        },
+        // Hook edges: only render when both endpoints landed in the settings
+        // zone. Cross-zone hooks (e.g. a settings.json hook to a script that
+        // ended up in orphan) become noise in tree mode — display: none
+        // suppresses both the edge and its label.
+        {
+          selector: 'edge[kind = "hook"].tree-mode.hook-cross-zone',
+          style: { display: "none" },
+        },
+        // Hook edges that survive (settings → settings) get the planned rose
+        // dashed treatment; the dashed pattern reinforces "trigger" semantics
+        // without recolouring the whole zone.
+        {
+          selector: 'edge[kind = "hook"].tree-mode:not(.hook-cross-zone)',
+          style: {
+            "line-style": "dashed",
+            opacity: 0.85,
+          },
+        },
+        // Orphan-zone nodes: faded so the user zooms in on the connected
+        // trunks; the orphan strip reads as "still here, just unreachable".
+        // Labels suppressed (set text-opacity: 0) since the strip is dense
+        // enough that overlapping labels would be unreadable noise.
+        {
+          selector: "node.zone-orphan",
+          style: {
+            opacity: 0.5,
+            "text-opacity": 0,
+          },
         },
       ],
       // Initial layout: cola for graph mode, `preset` for tree mode (when a
@@ -692,6 +767,40 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap, pos
     });
   }, [statusMap]);
 
+  // Tree-mode class toggle. Applies `.tree-mode` to every node + edge so the
+  // dedicated style selectors (mention "lianas", import softening, hook
+  // gating) activate; tags each node with `zone-<name>`; tags hook edges that
+  // cross out of the settings zone with `.hook-cross-zone` so the stylesheet
+  // can hide them. Removed when treeMode is false. Class-based same as the
+  // status overlay — cytoscape's selector matcher is fast and we don't want
+  // to mutate the construction effect (locked rule #33).
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.batch(() => {
+      cy.elements().removeClass(
+        "tree-mode zone-user zone-project zone-settings zone-orphan hook-cross-zone",
+      );
+      if (!treeMode) return;
+      cy.elements().addClass("tree-mode");
+      cy.nodes().forEach((n) => {
+        if (n.data("kind") === "folder") return;
+        const z = zones?.get(n.id());
+        if (z) n.addClass(`zone-${z}`);
+      });
+      // Tag cross-zone hook edges so the stylesheet hides them. A hook is
+      // "cross-zone" when either endpoint is NOT in the settings zone.
+      cy.edges().forEach((e) => {
+        if (e.data("kind") !== "hook") return;
+        const sz = zones?.get(e.data("source"));
+        const tz = zones?.get(e.data("target"));
+        if (sz !== "settings" || tz !== "settings") {
+          e.addClass("hook-cross-zone");
+        }
+      });
+    });
+  }, [treeMode, zones]);
+
   // Animate node positions when the tree-mode position map changes after the
   // initial mount. Three transitions are handled:
   //   * graph → tree    (null → Map):   tween every node to its new tree pos.
@@ -723,9 +832,10 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap, pos
     if (!prevHas && !nextHas) return;
 
     if (nextHas) {
-      // Tween each known node to its target tree position. Unknown nodes
-      // (those without a tree assignment in this commit — project/settings/
-      // orphan placeholders) stay put for now; Step 3.2 fills them in.
+      // Tween each known node to its target tree position. Step 3.2 fills
+      // every non-folder node into one of the four zones so the only nodes
+      // missing here are folder umbrellas (handled separately by the
+      // settle-folders pass) and any future kind we forget to assign.
       cy.batch(() => {
         cy.nodes().forEach((n) => {
           if (n.data("kind") === "folder") return;

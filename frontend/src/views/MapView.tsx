@@ -8,7 +8,7 @@ import { EdgeInfo } from "../components/EdgeInfo";
 import { fetchCwds, fetchSimulate } from "../api/client";
 import { useStore } from "../state/store";
 import { applyInternalFilter } from "../state/visibility";
-import { buildTreePositions } from "../tree/buildTreePositions";
+import { buildTreePositions, type ZoneMap } from "../tree/buildTreePositions";
 import type { Edge, LoadStatus } from "../types";
 
 // Default canvas viewport size used by the tree builder when the actual
@@ -91,8 +91,9 @@ export function MapView() {
 
   // Tree-mode positions: only computed when we actually need them so graph
   // mode pays zero cost. The map keys are FileEntry.id so it composes with the
-  // existing visibility filter without remapping.
-  const positions = useMemo(() => {
+  // existing visibility filter without remapping. `zones` rides alongside so
+  // GraphCanvas can apply per-zone styling without re-deriving membership.
+  const layout = useMemo(() => {
     if (!treeMode) return null;
     return buildTreePositions(
       visibleFiles,
@@ -102,6 +103,8 @@ export function MapView() {
       FALLBACK_VIEWPORT,
     );
   }, [treeMode, visibleFiles, visibleEdges, lastCwd, statusMap]);
+  const positions = layout?.positions ?? null;
+  const zones: ZoneMap | null = layout?.zones ?? null;
 
   return (
     <div className="view-shell">
@@ -112,6 +115,8 @@ export function MapView() {
         onHoverEdge={setHoveredEdge}
         statusMap={statusMap}
         positions={positions}
+        zones={zones}
+        treeMode={treeMode}
       />
       <IconOverlay cy={cy} />
       {/* Locked rule #33: PinOverlay is graph-mode only. */}
@@ -123,13 +128,11 @@ export function MapView() {
   );
 }
 
-// Three corner labels marking the tree-mode sub-zones. Step 3.1 fills only
-// the user zone (left third); the project/settings labels render as visual
-// scaffolding so Step 3.2 can drop the real subtrees in without re-doing
-// chrome. Uses JetBrains Mono uppercase 10px (matches the existing `.upper`
-// token in tokens.css) so the language stays consistent with the cwd panel
-// header. The cwd selector lives at top-left z=30 and overlaps the user-zone
-// corner — labels nudge inward to clear it.
+// Corner labels marking the tree-mode sub-zones. Uses JetBrains Mono
+// uppercase 10px (matches the existing `.upper` token in tokens.css) so the
+// language stays consistent with the cwd panel header. The cwd selector lives
+// at top-left z=30 and overlaps the user-zone corner — the user label nudges
+// down to clear it.
 function ZoneLabels() {
   const base: React.CSSProperties = {
     position: "absolute",
@@ -149,12 +152,11 @@ function ZoneLabels() {
       }}
       aria-hidden
     >
-      {/* USER zone: top-left third. Pushed below the cwd selector (top:16, h~36)
-          so they don't collide while remaining clearly part of the same zone. */}
+      {/* USER zone: top-left third, below the cwd selector. */}
       <div style={{ ...base, top: 64, left: 16 }}>user layer</div>
-      {/* PROJECT zone (Step 3.2 placeholder): top-right third. */}
+      {/* PROJECT zone: top-right third. */}
       <div style={{ ...base, top: 16, right: 16 }}>project layer</div>
-      {/* SETTINGS zone (Step 3.2 placeholder): bottom centre. */}
+      {/* SETTINGS zone: bottom centre, above the bottom strip. */}
       <div style={{ ...base, bottom: 16, left: "50%", transform: "translateX(-50%)" }}>
         settings layer
       </div>
