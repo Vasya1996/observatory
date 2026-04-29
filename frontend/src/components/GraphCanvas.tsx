@@ -122,12 +122,6 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
   const onHoverEdgeRef = useRef(onHoverEdge);
   onHoverEdgeRef.current = onHoverEdge;
 
-  // Status map mirrored as a ref so the construction effect (deps: [files,
-  // edges]) can seed the initial `node.data('status')` without listing
-  // statusMap as a dep — that would rebuild the whole graph on every cwd
-  // change. Live updates come from the second effect below.
-  const statusMapRef = useRef<Map<string, string> | null>(statusMap ?? null);
-  statusMapRef.current = statusMap ?? null;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -165,10 +159,6 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
           kind: f.kind,
           color: nodeColor(f.kind),
           size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),
-          // Set lazily by a separate useEffect once `statusMap` resolves;
-          // including the field at construction keeps cytoscape from
-          // recalculating selectors when the attribute first appears.
-          status: statusMapRef.current?.get(f.id) ?? null,
         },
         // Folded children get `display: none` until the user hovers their
         // folder; the underlying cy node still exists so its edges stay in
@@ -276,21 +266,30 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
             "text-events": "no",
           },
         },
-        // Status overlay (per-cwd, from /api/simulate). Color stays kind-coded;
-        // only opacity reflects load state. Listed BEFORE `.dim` so hover dim
-        // wins on conflict — cytoscape applies later rules with higher
-        // priority, mirroring CSS source order.
+        // Status overlay (per-cwd, from /api/simulate). Class-based instead
+        // of data-attribute selectors — empirically the latter don't pick up
+        // live data() mutations consistently in this cytoscape build. Color
+        // stays kind-coded; opacity reflects load state. Skipped/orphan also
+        // wash out to grey so "disconnected from this cwd" reads at a glance,
+        // not just as a fade. Listed BEFORE `.dim` so hover-dim wins on
+        // conflict — cytoscape applies later rules with higher priority.
         {
-          selector: 'node[status = "conditional"]',
-          style: { opacity: 0.6 },
+          selector: "node.status-conditional",
+          style: { opacity: 0.5 },
         },
         {
-          selector: 'node[status = "skipped"]',
-          style: { opacity: 0.3 },
+          selector: "node.status-skipped",
+          style: {
+            opacity: 0.35,
+            "background-color": "#4a4a52",
+          },
         },
         {
-          selector: 'node[status = "orphan"]',
-          style: { opacity: 0.15 },
+          selector: "node.status-orphan",
+          style: {
+            opacity: 0.18,
+            "background-color": "#2e2e34",
+          },
         },
         // Hover dimming (locked design #14).
         {
@@ -596,16 +595,24 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
     };
   }, [files, edges, onReady]);
 
-  // Apply load status to nodes whenever statusMap changes. Separate from the
-  // construction effect so cwd-driven status updates animate cheaply via
-  // attribute mutation instead of tearing down and re-laying out the graph.
+  // Apply load status to nodes whenever statusMap changes. Toggles a
+  // `status-<state>` class on each non-folder node — class-based selectors
+  // pick up live mutations cleanly, whereas the data-attribute approach
+  // empirically failed to repaint when n.data('status', ...) was updated
+  // post-construction. Separate from the construction effect so cwd-driven
+  // status updates mutate cytoscape in place instead of tearing down and
+  // re-laying out the graph.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
     cy.batch(() => {
       cy.nodes().forEach((n) => {
         if (n.data("kind") === "folder") return;
-        n.data("status", statusMap?.get(n.id()) ?? null);
+        n.removeClass(
+          "status-loaded status-conditional status-skipped status-orphan",
+        );
+        const s = statusMap?.get(n.id());
+        if (s) n.addClass(`status-${s}`);
       });
     });
   }, [statusMap]);
