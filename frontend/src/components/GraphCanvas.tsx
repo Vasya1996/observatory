@@ -10,6 +10,7 @@ import {
   computeFolderGroups,
   type FolderGroup,
 } from "./folderGroups";
+import { computeAmbiguousBasenames, displayLabel } from "./labels";
 
 cytoscape.use(cola);
 
@@ -78,20 +79,10 @@ function nodeSize(kind: NodeKind, inDeg: number, maxInDeg: number): number {
   return SIZE_MIN + (SIZE_MAX - SIZE_MIN) * t;
 }
 
-function basename(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i >= 0 ? p.slice(i + 1) : p;
-}
-
-// Graph label: prefer the metadata-derived display_name (plugin name from
-// .claude-plugin/plugin.json) over the filesystem basename, since the basename
-// for every plugin manifest is just "manifest.json" and that drowns the graph
-// in identical labels. Falls back to basename for everything else.
-function nodeLabel(f: FileEntry): string {
-  return f.display_name && f.display_name.length > 0
-    ? f.display_name
-    : basename(f.path);
-}
+// Node label logic centralised in labels.ts — handles plugin display_name
+// override AND ambiguous-basename disambiguation (six identical "CLAUDE.md"
+// labels become "~/CLAUDE.md", ".claude/CLAUDE.md", "storm-sdk/CLAUDE.md",
+// etc).
 
 // Map edge.lines.length → cytoscape edge width. Mentions get a wider line as
 // the count grows so the graph hints at relation "weight" before the user
@@ -136,6 +127,11 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
     const childFolderIndex = buildChildFolderIndex(folderGroups);
     const isFoldedChild = (id: string) => childFolderIndex.has(id);
 
+    // Set of basenames shared by 2+ files — these need parent-dir prefix in
+    // their graph label so users can tell which CLAUDE.md / settings.json
+    // they're looking at.
+    const ambiguousBasenames = computeAmbiguousBasenames(files);
+
     // Inbound count is per-target across both edge kinds. Max is taken only
     // over colored-circle nodes so a heavily-referenced icon kind can't
     // shrink the colored cohort.
@@ -155,7 +151,7 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
       ...files.map((f) => ({
         data: {
           id: f.id,
-          label: nodeLabel(f),
+          label: displayLabel(f, ambiguousBasenames),
           kind: f.kind,
           color: nodeColor(f.kind),
           size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),

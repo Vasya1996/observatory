@@ -1,19 +1,9 @@
 import type { Edge, FileEntry } from "../types";
+import { computeAmbiguousBasenames, displayLabel } from "./labels";
 
 interface Props {
   edge: Edge | null;
   files: FileEntry[];
-}
-
-function basename(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i >= 0 ? p.slice(i + 1) : p;
-}
-
-function fileLabel(f: FileEntry): string {
-  return f.display_name && f.display_name.length > 0
-    ? f.display_name
-    : basename(f.display);
 }
 
 const KIND_COLOR: Record<string, string> = {
@@ -37,6 +27,7 @@ export function EdgeInfo({ edge, files }: Props) {
   const src = files.find((f) => f.id === edge.source);
   const tgt = files.find((f) => f.id === edge.target);
   if (!src || !tgt) return null;
+  const ambiguous = computeAmbiguousBasenames(files);
 
   const count = edge.lines.length;
   const linesText = edge.lines.length
@@ -74,11 +65,11 @@ export function EdgeInfo({ edge, files }: Props) {
       }}
     >
       <div style={{ color: "#b9b4a6" }}>
-        <span>{fileLabel(src)}</span>
+        <span>{displayLabel(src, ambiguous)}</span>
         <span style={{ margin: "0 6px", color: KIND_COLOR[edge.kind] ?? "#b9b4a6" }}>
           {KIND_ARROW[edge.kind] ?? `→ ${edge.kind} →`}
         </span>
-        <span>{fileLabel(tgt)}</span>
+        <span>{displayLabel(tgt, ambiguous)}</span>
       </div>
       <div style={{ color: "#6e6a5e", marginTop: 2 }}>{detail}</div>
     </div>
