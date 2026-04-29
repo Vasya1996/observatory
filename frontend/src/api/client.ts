@@ -33,3 +33,60 @@ export async function fetchSimulate(cwd: string): Promise<SimulatorResponse> {
   if (!r.ok) throw new Error(`/api/simulate ${r.status}`);
   return r.json();
 }
+
+// --- Phase 2 write pipeline ------------------------------------------------
+
+export interface PreviewResponse {
+  confirm_token: string;
+  diff: string;
+  base_hash: string;
+  is_creation: boolean;
+}
+
+export interface WriteResponse {
+  written: boolean;
+  snapshot_id: string;
+}
+
+// Thrown by postPreview/postWrite when the backend returns a non-2xx. The
+// caller (useWritePipeline) inspects `status` to branch on 409/5xx.
+export class ApiError extends Error {
+  constructor(public status: number, public detail: string) {
+    super(detail || `HTTP ${status}`);
+  }
+}
+
+async function readError(r: Response): Promise<string> {
+  try {
+    const body = await r.json();
+    if (body && typeof body === "object" && "detail" in body) {
+      return String((body as { detail: unknown }).detail);
+    }
+  } catch {
+    // fall through
+  }
+  return `HTTP ${r.status}`;
+}
+
+export async function postPreview(
+  path: string,
+  newContent: string,
+): Promise<PreviewResponse> {
+  const r = await fetch("/api/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, new_content: newContent }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export async function postWrite(confirmToken: string): Promise<WriteResponse> {
+  const r = await fetch("/api/write", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm_token: confirmToken }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}

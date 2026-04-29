@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchIndex, fetchState } from "./api/client";
+import { DiffModal } from "./components/DiffModal";
 import { HeaderChrome } from "./components/HeaderChrome";
+import { PreviewChip } from "./components/PreviewChip";
+import { Toast } from "./components/Toast";
 import { useStore } from "./state/store";
 import { applyInternalFilter } from "./state/visibility";
 import { MapView } from "./views/MapView";
@@ -59,6 +62,13 @@ export default function App() {
       {view === "sim" && <SimulatorView />}
       {view === "ed" && <EditorView />}
       {view === "ext" && <ExtensionsView />}
+      {/* Phase 2 write-pipeline UI primitives. Mounted globally so any view
+          (Map, Simulator, Extensions, Editor) can call `useWritePipeline()`
+          without owning the modal/chip/toast machinery. Inert until a
+          `writeIntent` or `toasts[]` entry is staged. */}
+      <DiffModal />
+      <PreviewChip />
+      <Toast />
     </>
   );
 }

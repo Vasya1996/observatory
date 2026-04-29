@@ -2,6 +2,38 @@ import { create } from "zustand";
 import { postState } from "../api/client";
 import type { Edge, FileEntry, MapMode, UiState, ViewKey } from "../types";
 
+// --- Phase 2 write pipeline shapes ----------------------------------------
+
+// One patch in a multi-file write. `title` is the operation-level title shown
+// in the diff modal header (only the first patch's title wins; siblings hold
+// their own filename in the per-file `.diff-head`).
+export interface WritePatch {
+  path: string;
+  newContent: string;
+  title?: string;
+}
+
+// Live write intent that drives the global DiffModal / PreviewChip. Set via
+// useWritePipeline.requestWrite, cleared on resolve/cancel. The hook holds
+// the resolver so the component can call back when the user confirms or
+// cancels.
+export interface WriteIntent {
+  patches: WritePatch[];
+  softConfirm: boolean;
+  // Called when the user confirms (Apply) or auto-applies (chip timer).
+  onConfirm: () => void;
+  // Called when the user cancels (Esc / Cancel button / veil click).
+  onCancel: () => void;
+}
+
+export type ToastKind = "success" | "error" | "info";
+
+export interface Toast {
+  id: string;
+  kind: ToastKind;
+  message: string;
+}
+
 interface Store {
   files: FileEntry[];
   edges: Edge[];
@@ -35,6 +67,14 @@ interface Store {
   setMapMode: (v: MapMode) => void;
 
   hydrate: (s: UiState) => void;
+
+  // --- Phase 2 write pipeline (NOT persisted to /api/state) ----------------
+  writeIntent: WriteIntent | null;
+  setWriteIntent: (i: WriteIntent | null) => void;
+
+  toasts: Toast[];
+  pushToast: (t: Omit<Toast, "id">) => void;
+  dismissToast: (id: string) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -133,4 +173,18 @@ export const useStore = create<Store>((set, get) => ({
       mapMode: s.map_mode ?? "graph",
       inspectorOpen: s.inspector_open ?? false,
     }),
+
+  writeIntent: null,
+  setWriteIntent: (i) => set({ writeIntent: i }),
+
+  toasts: [],
+  pushToast: (t) =>
+    set((s) => ({
+      toasts: [
+        ...s.toasts,
+        { ...t, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` },
+      ],
+    })),
+  dismissToast: (id) =>
+    set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })),
 }));
