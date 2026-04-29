@@ -398,6 +398,20 @@ body {
   position: relative;
 }
 
+/* When the Inspector pane is mounted and open, the canvas-area sibling
+   shrinks to leave a 360px column on the right. The Inspector itself keeps
+   `right: 0`. Width transitions in lockstep with the pane (200ms) so the
+   canvas doesn't snap shut while the pane is still sliding in. */
+.map-canvas-area {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 64px);
+  transition: width 200ms ease-out;
+}
+.view-shell.has-inspector .map-canvas-area {
+  width: calc(100% - 360px);
+}
+
 /* placeholder hero used by views not yet implemented (Sim/Editor/Ext) */
 .placeholder {
   padding: 56px 64px 120px 64px;
@@ -440,4 +454,345 @@ body {
   font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+/* ---------- inspector pane (Map + Simulator views) ----------
+   Slide-in from the right, 360px wide. Anchored to the locked mockup
+   (`/home/voxdecaelo/claude-dashboard-design/index.html`, lines 265-303 and
+   978-1008). Shows when `inspector-pane.open`; otherwise translates fully
+   off-canvas to the right so the canvas / simulator can take the full
+   viewport width. */
+
+.inspector-pane {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  background: var(--ink-2);
+  border-left: 1px solid var(--line);
+  z-index: 25;
+  /* Closed → slid out to the right; transition mirrors the cwd-target panel
+     timing so the language stays consistent. */
+  transform: translateX(100%);
+  transition: transform 200ms ease-out;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.inspector-pane.open {
+  transform: translateX(0);
+  box-shadow: -24px 0 48px -24px rgba(0, 0, 0, 0.7);
+}
+
+.insp-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 24px 22px 80px 22px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.insp-body::-webkit-scrollbar { width: 6px; }
+.insp-body::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+
+/* Header — name + close button in one row, then full path, then chips. */
+.insp-head {
+  margin-bottom: 16px;
+}
+.insp-head-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.insp-name {
+  margin: 0;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 1.25;
+  color: var(--paper);
+  word-break: break-word;
+}
+.insp-name.dim { color: var(--paper-dim); font-weight: 300; }
+.insp-close {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--paper-faint);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 14px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: 120ms;
+  flex-shrink: 0;
+}
+.insp-close:hover {
+  border-color: var(--paper-faint);
+  color: var(--paper);
+}
+
+.insp-path {
+  margin-top: 6px;
+  font-family: "Instrument Serif", serif;
+  font-style: italic;
+  font-size: 12px;
+  color: var(--paper-faint);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.insp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.insp-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--ink);
+  white-space: nowrap;
+  transition: 120ms;
+}
+
+/* Validation chips block. Sits right under the header chips, slightly
+   tighter so it reads as a stack of issues rather than a separate band. */
+.insp-validation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Section block — separated by 1px --line dividers. */
+.insp-section {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.insp-section:last-of-type {
+  border-bottom: 1px solid var(--line);
+}
+.insp-section-h {
+  margin: 0 0 10px 0;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+/* Frontmatter rendered as a flat <dl>. Each row has a dashed --line-soft
+   bottom border for separation without being visually loud. */
+.insp-fm {
+  margin: 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+.insp-fm-row {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  align-items: start;
+}
+.insp-fm-row:last-child { border-bottom: none; }
+.insp-fm-k {
+  margin: 0;
+  color: var(--paper-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9.5px;
+}
+.insp-fm-v {
+  margin: 0;
+  color: var(--paper);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* Reference rows — group by kind, then list each target. Hover highlights
+   the row in --ink-2 so the click affordance is obvious. */
+.insp-ref-group {
+  margin-bottom: 12px;
+}
+.insp-ref-group:last-child { margin-bottom: 0; }
+.insp-ref-group-h {
+  margin: 0 0 6px 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+.insp-ref-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.insp-ref-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 6px;
+  margin: 0 -6px;
+  border-radius: 4px;
+  border-bottom: 1px dashed var(--line-soft);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+.insp-ref-row:last-child { border-bottom: none; }
+.insp-ref-row:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+.insp-ref-row:hover .insp-ref-label { color: var(--amber); }
+.insp-ref-arr {
+  color: var(--amber);
+  font-size: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.insp-ref-arr.in {
+  color: var(--teal);
+  transform: rotate(180deg);
+}
+.insp-ref-label {
+  color: var(--paper);
+  word-break: break-word;
+  transition: color 100ms ease;
+}
+.insp-ref-meta {
+  color: var(--paper-faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* Hooks-firing-here block. Each row stacks the event names above the
+   originating settings/plugin file. */
+.insp-hooks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.insp-hook-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+.insp-hook-row:last-child { border-bottom: none; }
+.insp-hook-events {
+  color: var(--rose);
+  letter-spacing: 0.06em;
+}
+.insp-hook-src {
+  color: var(--paper-faint);
+  font-size: 10px;
+}
+
+/* MCP server list — small dot + name. */
+.insp-mcp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.insp-mcp-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper);
+  border-bottom: 1px dashed var(--line-soft);
+}
+.insp-mcp-row:last-child { border-bottom: none; }
+.insp-mcp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lime);
+  box-shadow: 0 0 0 3px rgba(199, 227, 107, 0.12);
+  flex-shrink: 0;
+}
+
+/* Skill description block + folded-scalar warning banner. */
+.insp-skill-desc {
+  font-family: "Instrument Serif", serif;
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--paper-dim);
+  padding: 4px 0 10px 0;
+}
+.insp-warn-banner {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(207, 103, 71, 0.35);
+  border-radius: 6px;
+  background: rgba(207, 103, 71, 0.08);
+  color: var(--rust);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Generic hint paragraph used by per-kind blocks. */
+.insp-hint {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: var(--paper-faint);
+  margin: 4px 0;
+  line-height: 1.4;
+}
+.insp-hint.rust { color: var(--rust); }
+
+/* File-metadata footer — same structural look as the mockup's `.row`. */
+.insp-meta-section {
+  border-top: 1px solid var(--line);
+}
+.insp-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+.insp-meta-row:last-child { border-bottom: none; }
+.insp-meta-row .k {
+  color: var(--paper-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 9.5px;
+}
+.insp-meta-row .v {
+  color: var(--paper);
 }

@@ -711,12 +711,19 @@ export function GraphCanvas({
     });
 
     cy.on("tap", "node", (e) => {
-      useStore.getState().select((e.target as cytoscape.NodeSingular).id());
+      const n = e.target as cytoscape.NodeSingular;
+      // Folder umbrella nodes aren't real files — tapping them only fans the
+      // halo, never opens the Inspector.
+      if (n.data("kind") === "folder") return;
+      useStore.getState().select(n.id());
     });
     cy.on("tap", (e) => {
       if (e.target === cy) {
-        useStore.getState().select(null);
-        // Tap on background closes any expanded halo immediately so a
+        // Locked rule #24: tap on background does NOT clear selection — the
+        // Inspector stays open with the last node until the user closes it
+        // explicitly via the × button. This keeps reference rows clickable
+        // (a click on a child elsewhere doesn't lose its origin context).
+        // Tap on background still closes any expanded halo immediately so a
         // long-paused cursor doesn't keep the children stuck out.
         if (openFolderId) collapseFolder(true);
       }
@@ -766,6 +773,33 @@ export function GraphCanvas({
       });
     });
   }, [statusMap]);
+
+  // Selection sync (locked rule #24). Mirrors the store's `selectedId` onto
+  // the cytoscape `:selected` state so the existing `node:selected` style
+  // (paper border) lights up the chosen node, regardless of whether the
+  // selection came from a graph tap or from an Inspector reference click.
+  // Subscribes via store.subscribe so the parent doesn't have to re-render
+  // the canvas — we only react when the id actually changes.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const apply = (id: string | null) => {
+      cy.batch(() => {
+        cy.nodes(":selected").unselect();
+        if (id) {
+          const target = cy.getElementById(id);
+          if (target.nonempty()) target.select();
+        }
+      });
+    };
+    let prev = useStore.getState().selectedId;
+    apply(prev);
+    return useStore.subscribe((s) => {
+      if (s.selectedId === prev) return;
+      prev = s.selectedId;
+      apply(prev);
+    });
+  }, []);
 
   // Tree-mode class toggle. Applies `.tree-mode` to every node + edge so the
   // dedicated style selectors (mention "lianas", import softening, hook

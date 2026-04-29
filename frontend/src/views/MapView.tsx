@@ -3,6 +3,7 @@ import type cytoscape from "cytoscape";
 import { CwdSelector } from "../components/CwdSelector";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { IconOverlay } from "../components/IconOverlay";
+import { Inspector } from "../components/Inspector";
 import { PinOverlay } from "../components/PinOverlay";
 import { EdgeInfo } from "../components/EdgeInfo";
 import { TokenBudgetBar } from "../components/TokenBudgetBar";
@@ -30,11 +31,29 @@ export function MapView() {
   const [statusMap, setStatusMap] = useState<Map<string, LoadStatus> | null>(null);
 
   const treeMode = mapMode === "tree";
+  const inspectorOpen = useStore((s) => s.inspectorOpen);
 
   const { files: visibleFiles, edges: visibleEdges } = useMemo(
     () => applyInternalFilter(files, edges, showInternal),
     [files, edges, showInternal],
   );
+
+  // When the Inspector slides in/out, the canvas width changes by 360px.
+  // Cytoscape's auto-resize observer picks up the size change and reflows
+  // its internal viewport, but in tree mode the layout was applied as a
+  // one-shot preset — without a follow-up `cy.fit()` the tree zones stay at
+  // their pre-resize coordinates and run off-edge. We trigger fit on every
+  // toggle, in both modes (graph mode benefits too: a re-fit re-centers the
+  // cluster nicely in the now-narrower viewport). 220ms timeout matches the
+  // 200ms slide animation + a small buffer so the final size is settled.
+  useEffect(() => {
+    if (!cy) return;
+    const t = setTimeout(() => {
+      cy.resize();
+      cy.fit(undefined, 30);
+    }, 220);
+    return () => clearTimeout(t);
+  }, [cy, inspectorOpen]);
 
   // Auto-pick the first available cwd when none is set. Tree mode otherwise
   // renders an empty user-zone placeholder until the user opens the picker;
@@ -108,24 +127,31 @@ export function MapView() {
   const zones: ZoneMap | null = layout?.zones ?? null;
 
   return (
-    <div className="view-shell">
-      <GraphCanvas
-        files={visibleFiles}
-        edges={visibleEdges}
-        onReady={setCy}
-        onHoverEdge={setHoveredEdge}
-        statusMap={statusMap}
-        positions={positions}
-        zones={zones}
-        treeMode={treeMode}
-      />
-      <IconOverlay cy={cy} />
-      {/* Locked rule #33: PinOverlay is graph-mode only. */}
-      <PinOverlay cy={treeMode ? null : cy} />
-      <CwdSelector />
-      <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
-      {treeMode && <TokenBudgetBar zones={zones} />}
-      {treeMode && <ZoneLabels />}
+    <div className={`view-shell${inspectorOpen ? " has-inspector" : ""}`}>
+      {/* Canvas-area wrapper — narrows to leave 360px for the Inspector when
+          open. CwdSelector / EdgeInfo / TokenBudgetBar / ZoneLabels live
+          inside this wrapper so they reposition relative to the visible
+          canvas, not the underlying full view-shell. */}
+      <div className="map-canvas-area">
+        <GraphCanvas
+          files={visibleFiles}
+          edges={visibleEdges}
+          onReady={setCy}
+          onHoverEdge={setHoveredEdge}
+          statusMap={statusMap}
+          positions={positions}
+          zones={zones}
+          treeMode={treeMode}
+        />
+        <IconOverlay cy={cy} />
+        {/* Locked rule #33: PinOverlay is graph-mode only. */}
+        <PinOverlay cy={treeMode ? null : cy} />
+        <CwdSelector />
+        <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
+        {treeMode && <TokenBudgetBar zones={zones} />}
+        {treeMode && <ZoneLabels />}
+      </div>
+      <Inspector cy={cy} statusMap={statusMap} />
     </div>
   );
 }

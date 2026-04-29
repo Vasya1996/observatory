@@ -7,8 +7,16 @@ interface Store {
   edges: Edge[];
   setIndex: (files: FileEntry[], edges: Edge[]) => void;
 
+  // Currently-inspected file id. Decoupled from `inspectorOpen`: clicking ×
+  // hides the pane but keeps the last selection so re-opening restores
+  // context. Updated by GraphCanvas tap and by inspector reference rows.
   selectedId: string | null;
   select: (id: string | null) => void;
+
+  // Slide-in Inspector pane visibility. Auto-opens on first selection;
+  // explicit toggle via the × button or `setInspectorOpen(false)`.
+  inspectorOpen: boolean;
+  setInspectorOpen: (open: boolean) => void;
 
   view: ViewKey;
   setView: (v: ViewKey) => void;
@@ -38,6 +46,7 @@ function snapshot(s: Store): UiState {
     last_view: s.view,
     show_internal: s.showInternal,
     map_mode: s.mapMode,
+    inspector_open: s.inspectorOpen,
   };
 }
 
@@ -56,7 +65,26 @@ export const useStore = create<Store>((set, get) => ({
   setIndex: (files, edges) => set({ files, edges }),
 
   selectedId: null,
-  select: (id) => set({ selectedId: id }),
+  // Selecting a node auto-opens the Inspector if it's currently closed —
+  // first click in a session should reveal the pane; subsequent clicks
+  // (with the pane already open) just swap content. Clearing selection
+  // (id == null) leaves the pane state alone — the close button is the
+  // only thing that hides it (locked rule #24: selection sync stays
+  // independent of pane visibility).
+  select: (id) => {
+    const wasOpen = get().inspectorOpen;
+    set({ selectedId: id });
+    if (id && !wasOpen) {
+      set({ inspectorOpen: true });
+      schedulePersist(get);
+    }
+  },
+
+  inspectorOpen: false,
+  setInspectorOpen: (open) => {
+    set({ inspectorOpen: open });
+    schedulePersist(get);
+  },
 
   view: "map",
   setView: (v) => {
@@ -103,5 +131,6 @@ export const useStore = create<Store>((set, get) => ({
       view: (s.last_view ?? "map") as ViewKey,
       showInternal: s.show_internal ?? false,
       mapMode: s.map_mode ?? "graph",
+      inspectorOpen: s.inspector_open ?? false,
     }),
 }));

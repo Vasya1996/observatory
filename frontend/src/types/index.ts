@@ -45,6 +45,11 @@ export interface FileEntry {
   display_name?: string | null;
   // Snapshot count for collapsed plugin manifests; 1 for everything else.
   cached_versions?: number;
+  // Phase 2 write gate. True for kinds Vasya can edit through Observatory
+  // (claude_md / rule / memory / memory_index / settings / mcp / skill);
+  // False for read-only kinds (automemory / plugin_registry / plugin_manifest /
+  // script). Defaults true so payloads from older backends still parse.
+  writable?: boolean;
 }
 
 export interface Edge {
@@ -105,4 +110,5 @@ export interface UiState {
   last_view: ViewKey | null;
   show_internal?: boolean;
   map_mode?: MapMode;
+  inspector_open?: boolean;
 }
