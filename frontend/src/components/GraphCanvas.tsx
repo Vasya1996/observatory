@@ -192,18 +192,24 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
           selector: "node",
           style: {
             "background-color": "data(color)",
+            "background-opacity": 1,
             width: "data(size)",
             height: "data(size)",
             label: "data(label)",
             "font-family": '"JetBrains Mono", monospace',
             "font-size": "9px",
             color: C.paperDim,
+            // Decoupled from `opacity` — labels stay readable even when the
+            // node fades (hover-dim, future overlay states). Mission rule:
+            // "no silent omissions" — an unreadable label IS a silent omission.
+            "text-opacity": 1,
             "text-valign": "bottom",
             "text-margin-y": 5,
             "text-outline-color": "#0b0b0e",
             "text-outline-width": 2,
             "border-width": 0,
-            "transition-property": "opacity, border-width, border-color",
+            "transition-property":
+              "opacity, border-width, border-color, background-color",
             "transition-duration": 120,
           },
         },
@@ -264,33 +270,73 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
         },
         // Status overlay (per-cwd, from /api/simulate). Class-based instead
         // of data-attribute selectors — empirically the latter don't pick up
-        // live data() mutations consistently in this cytoscape build. Color
-        // stays kind-coded; opacity reflects load state. Skipped/orphan also
-        // wash out to grey so "disconnected from this cwd" reads at a glance,
-        // not just as a fade. Listed BEFORE `.dim` so hover-dim wins on
-        // conflict — cytoscape applies later rules with higher priority.
+        // live data() mutations consistently in this cytoscape build.
+        //
+        // Design (locked rule #32, redesign): colour answers the binary
+        // question "alive in this session?" — only `loaded` keeps the
+        // kind-color (amber for CLAUDE/rule, paper for memory). All three
+        // not-loaded states share a solid dark-grey fill `#3a3a40` so the
+        // live-load chain visually pops in colour, not just brightness.
+        // Differentiation between conditional / skipped / orphan happens
+        // through the BORDER, not opacity — opacity stays at 1 so labels
+        // remain crisp:
+        //   * loaded     → kind-color fill, thin solid paper border
+        //   * conditional→ grey fill, thin solid paper-faint border
+        //                  ("rule's there, condition didn't fire")
+        //   * skipped    → grey fill, thin dashed paper-faint border
+        //                  ("reachable on demand via mention link")
+        //   * orphan     → grey fill, no border (flattest, but still a
+        //                  silhouette against near-black bg)
+        //
+        // Listed BEFORE `.dim` so hover-dim wins on conflict — cytoscape
+        // applies later rules with higher priority.
+        {
+          selector: "node.status-loaded",
+          style: {
+            "border-width": 1.5,
+            "border-color": C.paper,
+            "border-style": "solid",
+            color: C.paper,
+          },
+        },
         {
           selector: "node.status-conditional",
-          style: { opacity: 0.5 },
+          style: {
+            "background-color": "#3a3a40",
+            "border-width": 1.5,
+            "border-color": C.paperFaint,
+            "border-style": "solid",
+            color: C.paperDim,
+          },
         },
         {
           selector: "node.status-skipped",
           style: {
-            opacity: 0.35,
-            "background-color": "#4a4a52",
+            "background-color": "#3a3a40",
+            "border-width": 1.5,
+            "border-color": C.paperFaint,
+            "border-style": "dashed",
+            color: C.paperDim,
           },
         },
         {
           selector: "node.status-orphan",
           style: {
-            opacity: 0.18,
-            "background-color": "#2e2e34",
+            "background-color": "#3a3a40",
+            "border-width": 0,
+            color: C.paperDim,
           },
         },
-        // Hover dimming (locked design #14).
+        // Hover dimming. Decoupled from text-opacity — labels stay readable
+        // even on dimmed nodes (mission rule: no silent omissions). Edges
+        // dim further than nodes since they're noise-prone in dense graphs.
         {
-          selector: ".dim",
-          style: { opacity: 0.15 },
+          selector: "node.dim",
+          style: { opacity: 0.4, "text-opacity": 1 },
+        },
+        {
+          selector: "edge.dim",
+          style: { opacity: 0.2 },
         },
         {
           selector: "edge.hover-out",
