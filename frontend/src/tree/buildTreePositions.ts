@@ -44,8 +44,9 @@ const USER_TREE_MAX_DEPTH = 5;
 const TREE_NODE_X_GAP = 90;
 const TREE_NODE_Y_GAP = 95;
 // Top of the user-side / project-side zone, in canvas px from top. Leaves
-// headroom for the corner labels above each root.
-const ZONE_TOP_PADDING_PX = 80;
+// headroom for the TokenBudgetBar (~y=56-72) AND the corner zone labels
+// (top:88) that sit above each root in tree mode.
+const ZONE_TOP_PADDING_PX = 110;
 // Settings root sits in the upper-middle of the bottom strip; reserve a bit
 // of margin so the corner label doesn't crowd it.
 const SETTINGS_ZONE_TOP_PADDING_PX = 24;

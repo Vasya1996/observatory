@@ -5,6 +5,7 @@ import { GraphCanvas } from "../components/GraphCanvas";
 import { IconOverlay } from "../components/IconOverlay";
 import { PinOverlay } from "../components/PinOverlay";
 import { EdgeInfo } from "../components/EdgeInfo";
+import { TokenBudgetBar } from "../components/TokenBudgetBar";
 import { fetchCwds, fetchSimulate } from "../api/client";
 import { useStore } from "../state/store";
 import { applyInternalFilter } from "../state/visibility";
@@ -123,6 +124,7 @@ export function MapView() {
       <PinOverlay cy={treeMode ? null : cy} />
       <CwdSelector />
       <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
+      {treeMode && <TokenBudgetBar zones={zones} />}
       {treeMode && <ZoneLabels />}
     </div>
   );
@@ -131,8 +133,10 @@ export function MapView() {
 // Corner labels marking the tree-mode sub-zones. Uses JetBrains Mono
 // uppercase 10px (matches the existing `.upper` token in tokens.css) so the
 // language stays consistent with the cwd panel header. The cwd selector lives
-// at top-left z=30 and overlaps the user-zone corner — the user label nudges
-// down to clear it.
+// at top-left z=30; the user label nudges down to clear it AND the
+// TokenBudgetBar's "USER · N" label that sits at the very top of the canvas
+// in tree mode. The right-corner project label sits at top:48 so it clears
+// the budget bar too (no cwd selector on the right).
 function ZoneLabels() {
   const base: React.CSSProperties = {
     position: "absolute",
@@ -152,10 +156,10 @@ function ZoneLabels() {
       }}
       aria-hidden
     >
-      {/* USER zone: top-left third, below the cwd selector. */}
-      <div style={{ ...base, top: 64, left: 16 }}>user layer</div>
-      {/* PROJECT zone: top-right third. */}
-      <div style={{ ...base, top: 16, right: 16 }}>project layer</div>
+      {/* USER zone: top-left third, below cwd selector + budget bar. */}
+      <div style={{ ...base, top: 88, left: 16 }}>user layer</div>
+      {/* PROJECT zone: top-right third, below budget bar. */}
+      <div style={{ ...base, top: 88, right: 16 }}>project layer</div>
       {/* SETTINGS zone: bottom centre, above the bottom strip. */}
       <div style={{ ...base, bottom: 16, left: "50%", transform: "translateX(-50%)" }}>
         settings layer

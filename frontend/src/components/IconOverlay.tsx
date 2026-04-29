@@ -47,17 +47,31 @@ export function IconOverlay({ cy }: Props) {
 
   if (!cy) return null;
 
-  const items: { id: string; x: number; y: number; w: number; inner: string }[] = [];
+  // Halo radius padding (rendered px) drawn outside the bright core for skill
+  // nodes. The bright core represents the always-loaded SKILL.md frontmatter
+  // description (costs tokens at session start); the faded halo represents the
+  // body, loaded on-demand. Visual cue for "two-layer cost", per Step 3.3.
+  const SKILL_HALO_PADDING_PX = 12;
+
+  const items: {
+    id: string;
+    x: number;
+    y: number;
+    w: number;
+    inner: string;
+    isSkill: boolean;
+  }[] = [];
   cy.nodes().forEach((n) => {
     // Collapsed children are styled `display: none` — cy.nodes() still
     // returns them, so skip explicitly to avoid drawing icons at the folder's
     // position while the halo is collapsed.
     if (n.hasClass("folded")) return;
-    const inner = ICON_PATH_BY_KIND[n.data("kind") as NodeKind];
+    const kind = n.data("kind") as NodeKind;
+    const inner = ICON_PATH_BY_KIND[kind];
     if (!inner) return;
     const p = n.renderedPosition();
     const w = n.renderedOuterWidth();
-    items.push({ id: n.id(), x: p.x, y: p.y, w, inner });
+    items.push({ id: n.id(), x: p.x, y: p.y, w, inner, isSkill: kind === "skill" });
   });
 
   return (
@@ -71,32 +85,55 @@ export function IconOverlay({ cy }: Props) {
       }}
       aria-hidden
     >
-      {items.map(({ id, x, y, w, inner }) => (
-        <div
-          key={id}
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            width: w,
-            height: w,
-            // Inset SVG inside the node circle so the glyph doesn't press
-            // against the rim. ~14% padding leaves a ~3-4px dark ring at
-            // ICON_SIZE=28 — SVG ends up ~72% of the circle.
-            padding: w * 0.14,
-            boxSizing: "border-box",
-            transform: `translate(${x - w / 2}px, ${y - w / 2}px)`,
-            willChange: "transform",
-          }}
-          dangerouslySetInnerHTML={{
-            __html:
-              `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" ` +
-              `viewBox="0 0 24 24" fill="none" stroke="${ICON_STROKE}" ` +
-              `stroke-width="${ICON_STROKE_WIDTH}" stroke-linecap="round" ` +
-              `stroke-linejoin="round">${inner}</svg>`,
-          }}
-        />
-      ))}
+      {items.map(({ id, x, y, w, inner, isSkill }) => {
+        const haloDiameter = w + 2 * SKILL_HALO_PADDING_PX;
+        return (
+          <div key={id}>
+            {isSkill && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: haloDiameter,
+                  height: haloDiameter,
+                  borderRadius: "50%",
+                  border: "1px solid var(--paper-faint)",
+                  opacity: 0.35,
+                  boxSizing: "border-box",
+                  transform: `translate(${x - haloDiameter / 2}px, ${
+                    y - haloDiameter / 2
+                  }px)`,
+                  willChange: "transform",
+                }}
+              />
+            )}
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                width: w,
+                height: w,
+                // Inset SVG inside the node circle so the glyph doesn't press
+                // against the rim. ~14% padding leaves a ~3-4px dark ring at
+                // ICON_SIZE=28 — SVG ends up ~72% of the circle.
+                padding: w * 0.14,
+                boxSizing: "border-box",
+                transform: `translate(${x - w / 2}px, ${y - w / 2}px)`,
+                willChange: "transform",
+              }}
+              dangerouslySetInnerHTML={{
+                __html:
+                  `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" ` +
+                  `viewBox="0 0 24 24" fill="none" stroke="${ICON_STROKE}" ` +
+                  `stroke-width="${ICON_STROKE_WIDTH}" stroke-linecap="round" ` +
+                  `stroke-linejoin="round">${inner}</svg>`,
+              }}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

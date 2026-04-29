@@ -17,6 +17,11 @@
   --rust: #cf6747;
   --plum: #8a6ca0;
   --teal: #5da39a;
+  /* Hook-edge / settings-zone tinge. Already shipped as a hex constant in
+     GraphCanvas.tsx since hook edges (commit fb93b76) — exposed here as a
+     token so other surfaces (TokenBudgetBar, future inspector chips) reuse
+     it without duplicating the value. */
+  --rose: #e89bb0;
   --grid: rgba(232, 228, 216, 0.04);
   --grid-strong: rgba(232, 228, 216, 0.08);
   --shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.7),
