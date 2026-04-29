@@ -303,6 +303,7 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
           selector: "node.status-conditional",
           style: {
             "background-color": "#3a3a40",
+            "background-opacity": 1,
             "border-width": 1.5,
             "border-color": C.paperFaint,
             "border-style": "solid",
@@ -313,6 +314,7 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
           selector: "node.status-skipped",
           style: {
             "background-color": "#3a3a40",
+            "background-opacity": 0.55,
             "border-width": 1.5,
             "border-color": C.paperFaint,
             "border-style": "dashed",
@@ -323,6 +325,7 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: P
           selector: "node.status-orphan",
           style: {
             "background-color": "#3a3a40",
+            "background-opacity": 0.25,
             "border-width": 0,
             color: C.paperDim,
           },
