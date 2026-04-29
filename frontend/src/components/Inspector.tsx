@@ -21,10 +21,18 @@ import { useEffect, useMemo, useState } from "react";
 import type cytoscape from "cytoscape";
 import YAML from "yaml";
 import { useStore } from "../state/store";
-import { fetchFile } from "../api/client";
+import { fetchCwds, fetchFile } from "../api/client";
 import { useWritePipeline } from "../hooks/useWritePipeline";
 import { computeAmbiguousBasenames, displayLabel } from "./labels";
-import type { Edge, FileEntry, FileKind, Issue, LoadStatus } from "../types";
+import { RuleWizardModal } from "./RuleWizardModal";
+import type {
+  CwdEntry,
+  Edge,
+  FileEntry,
+  FileKind,
+  Issue,
+  LoadStatus,
+} from "../types";
 
 interface Props {
   // Live cytoscape core. When provided AND a selection exists, clicking a
@@ -412,6 +420,9 @@ function InspectorBody({
       {/* PER-KIND LEAD BLOCK (rule/memory/skill/mcp/plugin) ----------- */}
       <KindLead file={file} mcpServers={mcpServers} />
 
+      {/* MEMORY FRONTMATTER WRITER (memory kind only) ----------------- */}
+      {file.kind === "memory" && <MemoryWriter file={file} />}
+
       {/* FRONTMATTER -------------------------------------------------- */}
       {file.frontmatter && Object.keys(file.frontmatter).length > 0 && (
         <section className="insp-section">
@@ -480,6 +491,11 @@ function InspectorBody({
           <span className="v">{formatMtime(file.mtime)}</span>
         </div>
       </section>
+
+      {/* + NEW RULE button (claude_md and rule kinds only) ----------- */}
+      {(file.kind === "claude_md" || file.kind === "rule") && (
+        <NewRuleLauncher origin={file} />
+      )}
     </div>
   );
 }
@@ -896,5 +912,398 @@ function EmptyState({
         <div className="insp-path">{subtitle}</div>
       </header>
     </div>
+  );
+}
+
+// --- memory frontmatter writer ---------------------------------------------
+
+const MEMORY_TYPES = ["feedback", "project", "reference", "user"] as const;
+type MemoryType = (typeof MEMORY_TYPES)[number];
+
+const MEMORY_INDEX_PATH = "/home/voxdecaelo/.claude/knowledge/MEMORY.md";
+
+// Inline form rendered in the Inspector when a memory file is selected.
+// Persists changes through the Phase 2 write pipeline as a multi-file patch
+// (memory file frontmatter + MEMORY.md index line). Per Vasya's locked
+// answer in jolly-sparking-spring.md Phase 2 #6: name (text) +
+// description (text, 150-char hint) + type (enum dropdown).
+function MemoryWriter({ file }: { file: FileEntry }) {
+  const fm = (file.frontmatter ?? {}) as Record<string, unknown>;
+  const initialName = typeof fm.name === "string" ? fm.name : "";
+  const initialDescription =
+    typeof fm.description === "string" ? fm.description : "";
+  const initialType: MemoryType =
+    typeof fm.type === "string" && (MEMORY_TYPES as readonly string[]).includes(fm.type)
+      ? (fm.type as MemoryType)
+      : "reference";
+
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription);
+  const [type, setType] = useState<MemoryType>(initialType);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { requestWrite } = useWritePipeline();
+  const pushToast = useStore((s) => s.pushToast);
+
+  // Reset form when the selected file changes — otherwise typing in one
+  // file's form leaks into the next one.
+  useEffect(() => {
+    setName(initialName);
+    setDescription(initialDescription);
+    setType(initialType);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file.id]);
+
+  const dirty =
+    name !== initialName ||
+    description !== initialDescription ||
+    type !== initialType;
+
+  const descLen = description.length;
+  const descOver = descLen > 150;
+
+  const canSave =
+    dirty &&
+    !busy &&
+    name.length > 0 &&
+    description.length > 0 &&
+    (MEMORY_TYPES as readonly string[]).includes(type);
+
+  const onSave = async () => {
+    if (!canSave) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // 1. Read current memory file content + parse frontmatter.
+      const fileRes = await fetchFile(file.path);
+      const memoryUpdate = rewriteMemoryFrontmatter(fileRes.content, {
+        name,
+        description,
+        type,
+      });
+      if (memoryUpdate.kind === "error") {
+        setError(memoryUpdate.message);
+        return;
+      }
+
+      // 2. Read MEMORY.md content + compute the index-line update.
+      const indexRes = await fetchFile(MEMORY_INDEX_PATH);
+      const basename = baseName(file.path);
+      const newIndexLine = `- [${name}](${basename}) — ${description}`;
+      const indexUpdate = updateMemoryIndex(
+        indexRes.content,
+        basename,
+        newIndexLine,
+        file.scope ?? null,
+      );
+
+      // 3. Build patches and pump through the write pipeline.
+      await requestWrite([
+        {
+          path: file.path,
+          newContent: memoryUpdate.content,
+          title: "update memory frontmatter",
+        },
+        {
+          path: MEMORY_INDEX_PATH,
+          newContent: indexUpdate,
+          title: "update MEMORY.md index",
+        },
+      ]);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      setError(reason);
+      pushToast({ kind: "error", message: `Save failed: ${reason}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="insp-section insp-mem-writer">
+      <SectionHeader>Frontmatter</SectionHeader>
+      <div className="insp-mem-row">
+        <label className="insp-mem-k">name</label>
+        <input
+          type="text"
+          className="insp-mem-input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Short title, human-readable"
+        />
+      </div>
+      <div className="insp-mem-row">
+        <label className="insp-mem-k">description</label>
+        <input
+          type="text"
+          className="insp-mem-input"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="One-line hook — info-dense, file paths not generic topics"
+        />
+      </div>
+      <div className={`insp-mem-counter${descOver ? " over" : ""}`}>
+        {descLen}/150 — keep it info-dense (file paths, not generic topics)
+      </div>
+      <div className="insp-mem-row">
+        <label className="insp-mem-k">type</label>
+        <select
+          className="insp-mem-select"
+          value={type}
+          onChange={(e) => setType(e.target.value as MemoryType)}
+        >
+          {MEMORY_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </div>
+      {error && <div className="insp-mem-error">{error}</div>}
+      <div className="insp-mem-actions">
+        <button
+          type="button"
+          className="insp-mem-save"
+          onClick={onSave}
+          disabled={!canSave}
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// Pure helper: take a memory file's raw text and rewrite its frontmatter to
+// hold the new name/description/type. Returns either the new content or an
+// error message (e.g. malformed YAML — locked Vasya answer 18: refuse to
+// write rather than overwrite). Exported for unit testing.
+export function rewriteMemoryFrontmatter(
+  text: string,
+  next: { name: string; description: string; type: string },
+):
+  | { kind: "ok"; content: string }
+  | { kind: "error"; message: string } {
+  const match = /^(---\s*\n)([\s\S]*?)(\n---\s*\n?)([\s\S]*)$/.exec(text);
+  if (!match) {
+    // No frontmatter block — prepend a fresh one. Per memory-architecture.md,
+    // every memory file MUST have name/description/type frontmatter.
+    const fm = `---\nname: ${escapeYamlString(next.name)}\ndescription: ${escapeYamlString(next.description)}\ntype: ${next.type}\n---\n\n`;
+    return { kind: "ok", content: fm + text };
+  }
+  const [, openFence, fmBlock, closeFence, body] = match;
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(fmBlock);
+  } catch (e) {
+    return {
+      kind: "error",
+      message: `Frontmatter YAML is malformed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  if (parsed && typeof parsed !== "object") {
+    return { kind: "error", message: "Frontmatter is not a mapping." };
+  }
+
+  // Update the three fields in-place by line so we minimise the diff —
+  // YAML.stringify() re-orders keys and strips comments.
+  const lines = fmBlock.split("\n");
+  const updated = mergeKeyLines(lines, {
+    name: next.name,
+    description: next.description,
+    type: next.type,
+  });
+  return { kind: "ok", content: openFence + updated.join("\n") + closeFence + body };
+}
+
+// Walk YAML lines and overwrite (or append) the three target keys at the
+// top-level. Handles missing keys by appending them just before the closing
+// fence (i.e. at the end of the lines list). Folded scalars and lists for
+// the three keys aren't expected (YAML scalar strings only); if encountered,
+// they're treated as a flat-string replacement target — the next-key
+// detection skips over their indented continuation.
+function mergeKeyLines(
+  lines: string[],
+  next: { name: string; description: string; type: string },
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const m = /^([ \t]*)([A-Za-z0-9_-]+):/.exec(line);
+    if (m && m[1].length === 0) {
+      const key = m[2];
+      const target = (next as Record<string, string>)[key];
+      if (target !== undefined) {
+        out.push(`${key}: ${escapeYamlString(target)}`);
+        seen.add(key);
+        // Skip continuation lines that are more indented than this key.
+        i += 1;
+        while (i < lines.length) {
+          const cont = lines[i];
+          if (cont.trim() === "") {
+            // blank line — only skip if next non-blank is indented (still
+            // part of the scalar). Cheap heuristic: just skip blanks
+            // surrounded by indents; keep them otherwise.
+            const peek = lines[i + 1];
+            if (peek && /^[ \t]+\S/.test(peek)) {
+              i += 1;
+              continue;
+            }
+            break;
+          }
+          if (/^[ \t]+\S/.test(cont)) {
+            i += 1;
+            continue;
+          }
+          break;
+        }
+        continue;
+      }
+    }
+    out.push(line);
+    i += 1;
+  }
+  // Append any missing keys.
+  for (const k of ["name", "description", "type"] as const) {
+    if (!seen.has(k)) {
+      out.push(`${k}: ${escapeYamlString(next[k])}`);
+    }
+  }
+  return out;
+}
+
+// Quote a YAML string when it contains chars that would otherwise alter
+// parsing (colons, leading punctuation, hash, quotes). Otherwise emit it
+// raw to keep the diff readable.
+function escapeYamlString(s: string): string {
+  if (s === "") return '""';
+  // Scalars that need quoting per YAML 1.2.
+  const needsQuotes =
+    /[:#\n"'\\{}\[\],&*?|>%@`]/.test(s) ||
+    /^[\s\-?]/.test(s) ||
+    /\s$/.test(s);
+  if (!needsQuotes) return s;
+  const escaped = s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+// Pure helper: produce a new MEMORY.md content with the given index line
+// updated (or appended under the right scope heading). Exported for tests.
+export function updateMemoryIndex(
+  indexText: string,
+  basename: string,
+  newLine: string,
+  scope: string | null,
+): string {
+  const lines = indexText.split("\n");
+  // Try to find an existing line that matches `[*](basename)` — the link
+  // target is the only stable anchor (title may change between renames).
+  const linkPattern = new RegExp(
+    `\\[[^\\]]*\\]\\(${escapeRegex(basename)}\\)`,
+  );
+  for (let i = 0; i < lines.length; i += 1) {
+    if (linkPattern.test(lines[i])) {
+      lines[i] = newLine;
+      return lines.join("\n");
+    }
+  }
+  // Not found — append under a scope heading. Scope-heading mapping mirrors
+  // MEMORY.md current layout: prefix → heading.
+  const heading = scopeHeading(scope);
+  const headingIdx = lines.findIndex((l) => l.startsWith(`## ${heading}`));
+  if (headingIdx >= 0) {
+    // Insert the new line just before the next heading (or end of file).
+    let insertAt = lines.length;
+    for (let i = headingIdx + 1; i < lines.length; i += 1) {
+      if (lines[i].startsWith("## ")) {
+        insertAt = i;
+        break;
+      }
+    }
+    // Trim trailing blanks at the end of the section so the new line doesn't
+    // get an awkward extra blank line between it and the next heading.
+    while (insertAt > headingIdx + 1 && lines[insertAt - 1].trim() === "") {
+      insertAt -= 1;
+    }
+    lines.splice(insertAt, 0, newLine);
+    return lines.join("\n");
+  }
+  // No matching heading — append a new "## Other" section at the end.
+  if (lines.length > 0 && lines[lines.length - 1] !== "") {
+    lines.push("");
+  }
+  lines.push("## Other", newLine);
+  return lines.join("\n");
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function scopeHeading(scope: string | null): string {
+  if (!scope) return "Other";
+  const headings: Record<string, string> = {
+    user: "User",
+    global: "Global (apply to all projects)",
+    tma: "TMA (Telegram Mini App — trust_api, Traction-Eye, trust_indexer, trust-api-docs)",
+    agentkit: "Agent Kit (AI spot trader)",
+    paperclip: "Paperclip (agent team control plane for Agent Kit)",
+    futures: "Futures (AI futures trader — not implemented)",
+    observatory: "Observatory (local Claude config dashboard — Steps 1+2+2.5+2.6 shipped 2026-04-27..28, Step 3 next)",
+    archive: "Archive (paused / informational)",
+  };
+  return headings[scope] ?? "Other";
+}
+
+function baseName(p: string): string {
+  const idx = p.lastIndexOf("/");
+  return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
+// --- new-rule launcher -----------------------------------------------------
+
+function NewRuleLauncher({ origin }: { origin: FileEntry }) {
+  const [open, setOpen] = useState(false);
+  const [cwds, setCwds] = useState<CwdEntry[] | null>(null);
+
+  // Lazy-fetch cwds the first time the wizard opens. Keeps the inspector
+  // mount lean for users who never click the button.
+  useEffect(() => {
+    if (!open || cwds) return;
+    let cancelled = false;
+    fetchCwds()
+      .then((res) => {
+        if (!cancelled) setCwds(res);
+      })
+      .catch(() => {
+        if (!cancelled) setCwds([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, cwds]);
+
+  return (
+    <>
+      <section className="insp-section insp-new-rule-section">
+        <button
+          type="button"
+          className="insp-new-rule-btn"
+          onClick={() => setOpen(true)}
+        >
+          + New rule from this {origin.kind === "claude_md" ? "CLAUDE.md" : "rule"}
+        </button>
+      </section>
+      {open && cwds !== null && (
+        <RuleWizardModal
+          originFile={origin}
+          cwds={cwds}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
