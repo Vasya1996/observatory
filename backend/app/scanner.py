@@ -281,38 +281,41 @@ def scan_roots() -> list[Path]:
 
 
 def discover_cwds() -> list[Path]:
-    """Walk from `~/` up to DISCOVERY_MAX_DEPTH levels, collect dirs that
-    contain a CLAUDE.md or a .claude/ subdir.
+    """Return the list of project directories the user can pick as cwd.
 
-    The walker is BFS-bounded by depth, skips noise dirs, and never descends
-    into the auto-memory blacklist. The result is always sorted by collapsed
-    path for stable UI.
+    A "project" is a direct child of `~/` that is a git repository (has a
+    `.git/` subdir). We deliberately do NOT include `~/` itself, `~/.claude`,
+    or arbitrary subdirs that merely happen to contain a CLAUDE.md — those
+    are user-config / knowledge-base dirs where users don't run Claude Code
+    sessions. The earlier walker (CLAUDE.md/.claude/ detection up to
+    DISCOVERY_MAX_DEPTH) over-included nested config-only folders like
+    `~/Claude/global/`. The git-repo heuristic mirrors how engineers actually
+    organize project roots and matches what the user expects to see in the
+    cwd selector.
+
+    Files inside a project (project-CLAUDE.md, .claude/rules/*.md) STILL
+    appear on the graph — that's a separate scanner-zone expansion concern,
+    not a cwd-discovery concern. This function only governs the dropdown.
     """
     home = config.HOME
     found: list[Path] = []
-    stack: list[tuple[Path, int]] = [(home, 0)]
-    while stack:
-        d, depth = stack.pop(0)
-        if config.is_blacklisted(d):
+    try:
+        entries = list(home.iterdir())
+    except (PermissionError, OSError):
+        return found
+    for e in entries:
+        if not e.is_dir():
             continue
-        try:
-            entries = list(d.iterdir())
-        except (PermissionError, OSError):
+        if e.name.startswith("."):
+            # Hidden dirs (`.claude`, `.config`, dotfile stashes) are never
+            # session cwds. `.claude` in particular is user-level config, not
+            # a project.
             continue
-        names = {e.name for e in entries if e.is_dir() or e.is_file()}
-        if "CLAUDE.md" in names or ".claude" in names:
-            found.append(d)
-        if depth >= config.DISCOVERY_MAX_DEPTH:
+        if e.name in config.DISCOVERY_SKIP_DIRS:
             continue
-        for e in entries:
-            if not e.is_dir():
-                continue
-            if e.name in config.DISCOVERY_SKIP_DIRS:
-                continue
-            if e.name.startswith(".") and e.name != ".claude":
-                # Don't recurse into hidden dirs (except .claude itself, which
-                # we surface only as a marker, not as a cwd).
-                continue
-            stack.append((e, depth + 1))
-    # Deduplicate while preserving sort.
-    return sorted(set(found), key=lambda p: str(p))
+        if config.is_blacklisted(e):
+            continue
+        if not (e / ".git").is_dir():
+            continue
+        found.append(e)
+    return sorted(found, key=lambda p: str(p))
