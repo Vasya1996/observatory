@@ -9,9 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/d3-hierarchy": "^3.1.7",
     "cytoscape": "^3.30.0",
     "cytoscape-cola": "^2.5.1",
     "cytoscape-fcose": "^2.2.0",
+    "d3-hierarchy": "^3.1.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.0"
