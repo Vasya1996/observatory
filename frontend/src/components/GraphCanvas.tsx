@@ -18,6 +18,12 @@ interface Props {
   edges: Edge[];
   onReady?: (cy: cytoscape.Core | null) => void;
   onHoverEdge?: (edge: Edge | null) => void;
+  // Per-cwd load status from `/api/simulate`. Keys are FileEntry.id; values are
+  // the simulator's TimelineStatus + frontend-derived "orphan" (file not in
+  // steps[] for the active cwd) and "unknown" (no cwd selected — opacity
+  // overlay disabled). Optional; when null the graph renders kind-only colors
+  // as before.
+  statusMap?: Map<string, string> | null;
 }
 
 // Tokens (kept here for cytoscape — JS can't read CSS variables on raw canvas styles).
@@ -99,7 +105,7 @@ function edgeWidth(kind: string, count: number): number {
   return Math.min(0.9 + 0.5 * Math.max(0, count - 1), 3);
 }
 
-export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
+export function GraphCanvas({ files, edges, onReady, onHoverEdge, statusMap }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -115,6 +121,13 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
   // re-renders without forcing the whole graph to rebuild.
   const onHoverEdgeRef = useRef(onHoverEdge);
   onHoverEdgeRef.current = onHoverEdge;
+
+  // Status map mirrored as a ref so the construction effect (deps: [files,
+  // edges]) can seed the initial `node.data('status')` without listing
+  // statusMap as a dep — that would rebuild the whole graph on every cwd
+  // change. Live updates come from the second effect below.
+  const statusMapRef = useRef<Map<string, string> | null>(statusMap ?? null);
+  statusMapRef.current = statusMap ?? null;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -152,6 +165,10 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
           kind: f.kind,
           color: nodeColor(f.kind),
           size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),
+          // Set lazily by a separate useEffect once `statusMap` resolves;
+          // including the field at construction keeps cytoscape from
+          // recalculating selectors when the attribute first appears.
+          status: statusMapRef.current?.get(f.id) ?? null,
         },
         // Folded children get `display: none` until the user hovers their
         // folder; the underlying cy node still exists so its edges stay in
@@ -258,6 +275,22 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
             "text-border-opacity": 1,
             "text-events": "no",
           },
+        },
+        // Status overlay (per-cwd, from /api/simulate). Color stays kind-coded;
+        // only opacity reflects load state. Listed BEFORE `.dim` so hover dim
+        // wins on conflict — cytoscape applies later rules with higher
+        // priority, mirroring CSS source order.
+        {
+          selector: 'node[status = "conditional"]',
+          style: { opacity: 0.6 },
+        },
+        {
+          selector: 'node[status = "skipped"]',
+          style: { opacity: 0.3 },
+        },
+        {
+          selector: 'node[status = "orphan"]',
+          style: { opacity: 0.15 },
         },
         // Hover dimming (locked design #14).
         {
@@ -562,6 +595,20 @@ export function GraphCanvas({ files, edges, onReady, onHoverEdge }: Props) {
       cyRef.current = null;
     };
   }, [files, edges, onReady]);
+
+  // Apply load status to nodes whenever statusMap changes. Separate from the
+  // construction effect so cwd-driven status updates animate cheaply via
+  // attribute mutation instead of tearing down and re-laying out the graph.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.batch(() => {
+      cy.nodes().forEach((n) => {
+        if (n.data("kind") === "folder") return;
+        n.data("status", statusMap?.get(n.id()) ?? null);
+      });
+    });
+  }, [statusMap]);
 
   return (
     <div

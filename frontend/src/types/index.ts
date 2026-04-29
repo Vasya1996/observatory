@@ -64,6 +64,41 @@ export interface IndexResponse {
   edges: Edge[];
 }
 
+export interface CwdEntry {
+  path: string;   // absolute
+  display: string; // ~-collapsed
+}
+
+// Mirrors backend `TimelineStatus` (simulator emits these per file). Tree mode
+// extends with two derived states the simulator never returns directly:
+//   * `orphan`  — file exists on disk but not reachable for the active cwd
+//                 (i.e. absent from steps[]).
+//   * `unknown` — no cwd is selected yet, so simulator hasn't been queried.
+export type TimelineStatus = "loaded" | "conditional" | "skipped";
+export type LoadStatus = TimelineStatus | "orphan" | "unknown";
+
+export interface TimelineStep {
+  idx: number;
+  file_id: string | null;
+  file_path: string;
+  status: TimelineStatus;
+  matched_on?: string | null;
+  reason?: string | null;
+}
+
+export interface SimulatorStats {
+  files_loaded: number;
+  est_tokens: number;
+  conditional_matches: number;
+  on_demand_reachable: number;
+}
+
+export interface SimulatorResponse {
+  cwd: string;
+  steps: TimelineStep[];
+  stats: SimulatorStats;
+}
+
 export interface UiState {
   pins: Record<string, { x: number; y: number }>;
   last_cwd: string | null;

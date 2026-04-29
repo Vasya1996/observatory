@@ -1,5 +1,6 @@
 import { useStore } from "../state/store";
 import type { ViewKey } from "../types";
+import { CwdSelector } from "./CwdSelector";
 
 interface Props {
   fileCount: number;
@@ -71,6 +72,7 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
             <span className={`dot${watcherLive ? "" : " warn"}`} />
             watcher · {watcherLive ? "live" : "idle"}
           </span>
+          <CwdSelector />
           <button
             type="button"
             className={`pill mono toggle${showInternal ? " on" : ""}`}
@@ -80,7 +82,6 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
             internal · {showInternal ? "on" : "off"}
           </button>
           <span className="pill mono">{fileCount} files · {edgeCount} edges</span>
-          <span className="pill mono">~/.claude</span>
         </div>
       </div>
     </header>
