@@ -7,12 +7,15 @@ mirrors Claude Code's actual behaviour:
   1. `~/.claude/CLAUDE.md` always.
   2. `~/.claude/rules/*.md` without `paths:` always.
   3. `~/.claude/rules/*.md` with `paths:` — loaded if cwd matches, else conditional.
-  4. Walk UP from cwd to `~`: at each level, load `<dir>/CLAUDE.md` if it exists,
-     and `<dir>/.claude/rules/*.md` (same `paths:` rule).
-  5. Transitively chase `@-import` from anything loaded.
-  6. `mention`-reachable files → on-demand-reachable (skipped, but counted).
+  4. For the session cwd specifically: also load `<cwd>/.claude/CLAUDE.md`
+     (team-shared project instructions, per official Claude Code docs).
+  5. Walk UP from cwd to `~`: at each level, load `<dir>/CLAUDE.md` AND
+     `<dir>/CLAUDE.local.md` if either exists, plus `<dir>/.claude/rules/*.md`
+     (same `paths:` rule).
+  6. Transitively chase `@-import` from anything loaded.
+  7. `mention`-reachable files → on-demand-reachable (skipped, but counted).
 
-Step 4 is what makes the simulator work for any user: we don't hardcode
+Step 5 is what makes the simulator work for any user: we don't hardcode
 `~/CLAUDE.md`, we discover it as the ancestor walk ascends.
 """
 from __future__ import annotations
@@ -139,7 +142,16 @@ def simulate(
                     f"paths: {f.paths_globs} did not match cwd",
                 )
 
-    # 4. Walk up from cwd to ~ (exclusive of duplicates already covered above).
+    # 4. Project-team-shared file: <cwd>/.claude/CLAUDE.md. Per the official
+    # Claude Code docs this lives alongside <cwd>/CLAUDE.md as a project-level
+    # instruction file (it's NOT walked up the ancestor chain — only the
+    # session cwd has one).
+    project_team = by_path.get(str(cwd / ".claude" / "CLAUDE.md"))
+    if project_team and project_team.id not in loaded_ids:
+        _push(project_team, "loaded", "project-team",
+              f"Team-shared CLAUDE.md at {config.collapse_home(cwd / '.claude')}")
+
+    # 5. Walk up from cwd to ~ (exclusive of duplicates already covered above).
     ancestors = _ancestors_to_home(cwd)
     seen_dirs: set[Path] = set()
     for d in ancestors:
@@ -151,6 +163,12 @@ def simulate(
         if cm and cm.id not in loaded_ids:
             _push(cm, "loaded", "ancestor-walk",
                   f"CLAUDE.md found at ancestor {config.collapse_home(d)}")
+        # CLAUDE.local.md at this level (per docs: "локальные инструкции,
+        # специфичные для проекта" — historically common on the spine).
+        local_cm = by_path.get(str(d / "CLAUDE.local.md"))
+        if local_cm and local_cm.id not in loaded_ids:
+            _push(local_cm, "loaded", "ancestor-walk",
+                  f"CLAUDE.local.md at {config.collapse_home(d)}")
         # .claude/rules/*.md at this level
         for f in files:
             if f.kind != "rule":

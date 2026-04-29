@@ -119,9 +119,7 @@ class _DebouncedHandler(FileSystemEventHandler):
 def start_watcher(cache: IndexCache) -> Observer:
     handler = _DebouncedHandler(cache)
     obs = Observer()
-    for root in scanner.scan_roots():
-        # Recursive=False for ~ (too noisy), recursive=True elsewhere.
-        recursive = root != Path.home()
+    for root, recursive in scanner.scan_roots():
         try:
             obs.schedule(handler, str(root), recursive=recursive)
         except OSError:

@@ -172,16 +172,43 @@ def scan() -> list[RawFile]:
     if _exists_file(mcp):
         out.append(RawFile(mcp, "mcp"))
 
-    # Per-repo rules.
-    for rule_dir in config.PER_REPO_RULE_DIRS:
-        for p in _glob(rule_dir, "*.md"):
-            out.append(RawFile(p, "rule"))
+    # Project-zone scan: for each discovered cwd, surface its top-level
+    # Claude config files. Targeted reads — no directory walks.
+    for cwd in discover_cwds():
+        out.extend(_scan_project_zone(cwd))
 
     # Auto-memory zone (read-only).
     if config.AUTO_MEMORY_DIR.is_dir():
         for p in _glob(config.AUTO_MEMORY_DIR, "*.md"):
             out.append(RawFile(p, "automemory", readonly=True))
 
+    return out
+
+
+def _scan_project_zone(cwd: Path) -> list[RawFile]:
+    """Surface the four project-level Claude config locations under `cwd`:
+
+    * `<cwd>/CLAUDE.md` — project-level top
+    * `<cwd>/CLAUDE.local.md` — local-override sibling (deprecated by Claude
+      docs but still loaded)
+    * `<cwd>/.claude/CLAUDE.md` — team-shared project instructions
+    * `<cwd>/.claude/rules/*.md` — project-level rules (paths: support same
+      as user-level rules; resolver/parser are kind-driven, not path-driven)
+
+    Targeted reads only — no directory walks. Blacklist (rule #5) still
+    applies as a safety net.
+    """
+    out: list[RawFile] = []
+    for p in [
+        cwd / "CLAUDE.md",
+        cwd / "CLAUDE.local.md",
+        cwd / ".claude" / "CLAUDE.md",
+    ]:
+        if _exists_file(p) and not config.is_blacklisted(p):
+            out.append(RawFile(p, "claude_md"))
+    for p in _glob(cwd / ".claude" / "rules", "*.md"):
+        if not config.is_blacklisted(p):
+            out.append(RawFile(p, "rule"))
     return out
 
 
@@ -251,30 +278,41 @@ def _scan_user_plugins(registry: Path) -> list[RawFile]:
     return out
 
 
-def scan_roots() -> list[Path]:
-    """Directories the watcher needs to observe.
+def scan_roots() -> list[tuple[Path, bool]]:
+    """`(path, recursive)` tuples for the watcher to observe.
 
     Returned paths are guaranteed to exist; absent dirs are skipped so watchdog
     doesn't crash on missing roots.
+
+    `recursive=False` is used for huge directories where we only care about
+    a few specific files at the top level — `~` (we only want `~/CLAUDE.md`)
+    and each project cwd (only `<cwd>/CLAUDE.md` + `<cwd>/CLAUDE.local.md`,
+    not the entire repo subtree which can blow past inotify watch limits on
+    large checkouts with `node_modules`/`.git`/etc).
     """
-    candidates = [
-        config.HOME,  # for ~/CLAUDE.md only — we filter events in the watcher
-        config.CLAUDE_DIR,
-        config.CLAUDE_DIR / "rules",
-        config.CLAUDE_DIR / "knowledge",
-        config.CLAUDE_DIR / "skills",
-        config.CLAUDE_DIR / "remote" / "plugins",
-        config.CLAUDE_DIR / "plugins",
-        config.AUTO_MEMORY_DIR,
-        *config.PER_REPO_RULE_DIRS,
+    candidates: list[tuple[Path, bool]] = [
+        (config.HOME, False),  # ~/CLAUDE.md only — we filter events in the watcher
+        (config.CLAUDE_DIR, True),
+        (config.CLAUDE_DIR / "rules", True),
+        (config.CLAUDE_DIR / "knowledge", True),
+        (config.CLAUDE_DIR / "skills", True),
+        (config.CLAUDE_DIR / "remote" / "plugins", True),
+        (config.CLAUDE_DIR / "plugins", True),
+        (config.AUTO_MEMORY_DIR, True),
     ]
+    # Project-zone roots: top-level non-recursive (catches CLAUDE.md and
+    # CLAUDE.local.md edits without watching the entire repo); the rules dir
+    # gets a separate recursive watch since it's small.
+    for cwd in discover_cwds():
+        candidates.append((cwd, False))
+        candidates.append((cwd / ".claude" / "rules", True))
     seen: set[Path] = set()
-    out: list[Path] = []
-    for c in candidates:
+    out: list[tuple[Path, bool]] = []
+    for c, recursive in candidates:
         try:
             if c.is_dir() and c not in seen:
                 seen.add(c)
-                out.append(c)
+                out.append((c, recursive))
         except OSError:
             continue
     return out

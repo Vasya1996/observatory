@@ -11,15 +11,6 @@ from pathlib import Path
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
 
-# Per-repo `.claude/rules/` candidates. The list is opportunistic: directories
-# that don't exist are skipped silently. Adding new repos here is the only
-# manual step a new user takes; project-discovery in `/api/cwds` is automatic.
-PER_REPO_RULE_DIRS = [
-    HOME / "trust_api" / ".claude" / "rules",
-    HOME / "Traction-Eye" / ".claude" / "rules",
-    HOME / "TractionEye-Agent-kit" / ".claude" / "rules",
-]
-
 # Auto-memory zone — read-only, scanned but not parsed for outbound refs.
 AUTO_MEMORY_DIR = CLAUDE_DIR / "projects" / "-home-voxdecaelo" / "memory"
 
