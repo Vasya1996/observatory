@@ -59,6 +59,14 @@ class ParsedFile:
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _IMPORT_RE = re.compile(r"(?<![A-Za-z0-9_])@(/[^\s)`]+|~/[^\s)`]+|\.{1,2}/[^\s)`]+)")
 _FENCE_RE = re.compile(r"^\s*```")
+# Path-shaped mentions: `~/foo/bar.md` or `/abs/path/bar.md`. Lookbehind
+# blocks alphanumerics/`/`/`.` before the token so we don't catch URLs
+# (`https://x.com/foo.md`) or relative-path references (`./foo.md`,
+# `../bar.md`). Non-greedy `+?` stops at the first `.md` so multiple
+# mentions on one line each match independently.
+_PATH_MENTION_RE = re.compile(
+    r"(?<![A-Za-z0-9_/.])(~/[^\s)`'\"<>]+?\.md|/[^\s)`'\"<>]+?\.md)"
+)
 
 
 def _split_frontmatter(text: str) -> tuple[Optional[str], str, int]:
@@ -127,11 +135,14 @@ def _parse_imports_and_mentions(
     body: str,
     body_start_line: int,
     in_scope_basenames: set[str],
+    in_scope_paths: set[str],
     self_basename: str,
+    self_path: str,
     skip_mentions: bool,
 ) -> list[ParsedRef]:
     refs: list[ParsedRef] = []
     in_fence = False
+    home = Path.home()
     for offset, line in enumerate(body.splitlines()):
         line_num = body_start_line + offset
         if _FENCE_RE.match(line):
@@ -158,6 +169,26 @@ def _parse_imports_and_mentions(
                 refs.append(
                     ParsedRef(kind="mention", raw_target=basename, line=line_num)
                 )
+        # Path-shaped mention: `~/foo/bar.md` or `/abs/path/bar.md`. Resolves
+        # to a canonical absolute path; only emitted when that path is in the
+        # scanned set. Path tokens are unique (no basename ambiguity), so the
+        # resolver can look up directly via the path map.
+        for m in _PATH_MENTION_RE.finditer(line):
+            raw = m.group(1)
+            try:
+                if raw.startswith("~/"):
+                    canonical = str((home / raw[2:]).resolve())
+                else:
+                    canonical = str(Path(raw).resolve())
+            except OSError:
+                continue
+            if canonical == self_path:
+                continue
+            if canonical not in in_scope_paths:
+                continue
+            refs.append(
+                ParsedRef(kind="mention", raw_target=canonical, line=line_num)
+            )
     return refs
 
 
@@ -166,6 +197,7 @@ def parse_markdown(
     kind: FileKind,
     readonly: bool,
     in_scope_basenames: set[str],
+    in_scope_paths: set[str],
 ) -> ParsedFile:
     text = path.read_text(encoding="utf-8", errors="replace")
     line_count = text.count("\n") + (0 if text.endswith("\n") else 1) if text else 0
@@ -238,7 +270,9 @@ def parse_markdown(
         body=body,
         body_start_line=body_start_line,
         in_scope_basenames=in_scope_basenames,
+        in_scope_paths=in_scope_paths,
         self_basename=path.name,
+        self_path=str(path),
         # Auto-memory zone: render but don't extract outbound refs from it.
         skip_mentions=readonly or kind == "automemory",
     )

@@ -94,14 +94,19 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
     """Run a full scan + parse + resolve pass and return frozen results."""
     raw_files = scanner.scan()
 
-    # First pass: collect basenames so the parser can perform mention matching.
+    # First pass: collect basenames + absolute paths so the parser can perform
+    # both basename-mention matching and path-shaped mention matching.
     in_scope_basenames: set[str] = {rf.path.name for rf in raw_files}
+    in_scope_paths: set[str] = {str(rf.path) for rf in raw_files}
 
     parsed: list[ParsedFile] = []
     for rf in raw_files:
         try:
             if rf.path.suffix == ".md":
-                pf = parse_markdown(rf.path, rf.kind, rf.readonly, in_scope_basenames)
+                pf = parse_markdown(
+                    rf.path, rf.kind, rf.readonly,
+                    in_scope_basenames, in_scope_paths,
+                )
             else:
                 pf = parse_json_only_metadata(rf.path, rf.kind, rf.readonly)
         except OSError as e:
@@ -175,6 +180,23 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
                         )
                     )
             else:  # mention
+                # Path-shaped raw_target → resolve directly via path. Absolute
+                # paths are unique by construction, so no ambiguity branch.
+                if ref.raw_target.startswith("/"):
+                    target_path = Path(ref.raw_target)
+                    if target_path not in {q.raw_path for q in parsed}:
+                        continue
+                    target_id = hashlib.sha1(
+                        str(target_path).encode("utf-8")
+                    ).hexdigest()
+                    if target_id == fid:
+                        continue
+                    if ref.line is not None:
+                        edge_acc[(fid, target_id, "mention")].add(ref.line)
+                    else:
+                        edge_acc[(fid, target_id, "mention")]
+                    continue
+                # Basename-shaped raw_target → existing logic with ambiguity check.
                 candidates = by_basename.get(ref.raw_target, [])
                 if not candidates:
                     continue
@@ -367,6 +389,9 @@ def parsed_for_path(path: Path) -> Optional[ParsedFile]:
         return None
     rf = next(rf for rf in raw_files if rf.path == path)
     in_scope = {r.path.name for r in raw_files}
+    in_scope_paths = {str(r.path) for r in raw_files}
     if rf.path.suffix == ".md":
-        return parse_markdown(rf.path, rf.kind, rf.readonly, in_scope)
+        return parse_markdown(
+            rf.path, rf.kind, rf.readonly, in_scope, in_scope_paths,
+        )
     return parse_json_only_metadata(rf.path, rf.kind, rf.readonly)
