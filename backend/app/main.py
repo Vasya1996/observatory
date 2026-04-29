@@ -50,5 +50,6 @@ def root() -> dict:
             "/api/index", "/api/cwds", "/api/simulate?cwd=...",
             "/api/file?path=...", "/api/extensions",
             "/api/state", "/api/events",
+            "/api/paths-proposals",
         ],
     }

@@ -12,13 +12,14 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
-from . import config, scanner, writer
+from . import config, paths_proposals, scanner, writer
 from .models import (
     CwdEntry,
     ExtensionsResponse,
     FileReadResponse,
     IndexResponse,
     McpCard,
+    PathProposalsResponse,
     PendingWrite,
     PluginCard,
     PreviewRequest,
@@ -107,6 +108,20 @@ def get_cwds() -> list[CwdEntry]:
         CwdEntry(path=str(p), display=config.collapse_home(p))
         for p in scanner.discover_cwds()
     ]
+
+
+@router.get("/paths-proposals", response_model=PathProposalsResponse)
+def get_paths_proposals(req: Request) -> PathProposalsResponse:
+    """Auto-rewrite proposals for rules whose `paths:` globs became broken.
+
+    Computed lazily on each call — the frontend polls this after every SSE
+    `reindex` event (locked answer 15: trigger on each reindex). The actual
+    write still flows through `/api/preview` → `/api/write` (locked rule #36).
+    """
+    files, _, _ = _cache(req).snapshot()
+    return PathProposalsResponse(
+        proposals=paths_proposals.compute_proposals(files),
+    )
 
 
 @router.get("/simulate", response_model=SimulatorResponse)

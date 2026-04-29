@@ -205,3 +205,33 @@ class PendingWrite(BaseModel):
     base_hash: str
     is_creation: bool
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 paths auto-rewrite proposals
+# ---------------------------------------------------------------------------
+
+
+PathProposalConfidence = Literal["high", "medium", "low"]
+
+
+class PathProposal(BaseModel):
+    """A proposed rewrite for a rule whose `paths:` glob(s) became broken
+    (target dir no longer exists). Surfaced by `/api/paths-proposals` —
+    the actual write still flows through the `/api/preview` → `/api/write`
+    diff-modal pipeline (locked rule #36 — never silent).
+    """
+    rule_path: str
+    rule_id: str
+    current_globs: list[str]
+    broken_globs: list[str]
+    # Replacements aligned 1:1 with `broken_globs`. May be empty when no
+    # candidate cwd matched any broken segment — the entry is still surfaced
+    # so the user knows we noticed.
+    proposed_globs: list[str]
+    match_basis: str
+    confidence: PathProposalConfidence
+
+
+class PathProposalsResponse(BaseModel):
+    proposals: list[PathProposal]
