@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { postState } from "../api/client";
-import type { Edge, FileEntry, UiState, ViewKey } from "../types";
+import type { Edge, FileEntry, MapMode, UiState, ViewKey } from "../types";
 
 interface Store {
   files: FileEntry[];
@@ -23,6 +23,9 @@ interface Store {
   showInternal: boolean;
   setShowInternal: (v: boolean) => void;
 
+  mapMode: MapMode;
+  setMapMode: (v: MapMode) => void;
+
   hydrate: (s: UiState) => void;
 }
 
@@ -34,6 +37,7 @@ function snapshot(s: Store): UiState {
     last_cwd: s.lastCwd,
     last_view: s.view,
     show_internal: s.showInternal,
+    map_mode: s.mapMode,
   };
 }
 
@@ -86,11 +90,18 @@ export const useStore = create<Store>((set, get) => ({
     schedulePersist(get);
   },
 
+  mapMode: "graph",
+  setMapMode: (v) => {
+    set({ mapMode: v });
+    schedulePersist(get);
+  },
+
   hydrate: (s) =>
     set({
       pins: s.pins ?? {},
       lastCwd: s.last_cwd ?? null,
       view: (s.last_view ?? "map") as ViewKey,
       showInternal: s.show_internal ?? false,
+      mapMode: s.map_mode ?? "graph",
     }),
 }));

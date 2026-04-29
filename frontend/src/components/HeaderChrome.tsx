@@ -19,6 +19,8 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
   const setView = useStore((s) => s.setView);
   const showInternal = useStore((s) => s.showInternal);
   const setShowInternal = useStore((s) => s.setShowInternal);
+  const mapMode = useStore((s) => s.mapMode);
+  const setMapMode = useStore((s) => s.setMapMode);
 
   return (
     <header className="chrome">
@@ -40,6 +42,28 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
               {t.label}
             </button>
           ))}
+          {view === "map" && (
+            <span className="subtabs" role="tablist" aria-label="Map mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mapMode === "graph"}
+                className={`subtab${mapMode === "graph" ? " on" : ""}`}
+                onClick={() => setMapMode("graph")}
+              >
+                <span className="num">01a</span>Graph
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mapMode === "tree"}
+                className={`subtab${mapMode === "tree" ? " on" : ""}`}
+                onClick={() => setMapMode("tree")}
+              >
+                <span className="num">01b</span>Tree
+              </button>
+            </span>
+          )}
         </nav>
 
         <div className="status">

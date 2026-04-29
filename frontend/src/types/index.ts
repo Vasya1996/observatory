@@ -17,6 +17,8 @@ export type EdgeKind = "import" | "mention" | "hook";
 
 export type ViewKey = "map" | "sim" | "ed" | "ext";
 
+export type MapMode = "graph" | "tree";
+
 export interface Issue {
   severity: "info" | "warning" | "error";
   code: string;
@@ -67,4 +69,5 @@ export interface UiState {
   last_cwd: string | null;
   last_view: ViewKey | null;
   show_internal?: boolean;
+  map_mode?: MapMode;
 }

@@ -112,6 +112,22 @@ body {
 .tabs button .num { color: var(--paper-faint); margin-right: 8px; }
 .tabs button.on .num { color: var(--amber-soft); }
 
+.tabs .subtabs {
+  display: inline-flex;
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+  gap: 0;
+}
+.tabs .subtab {
+  padding: 6px 12px;
+  font-size: 10px;
+  background: transparent;
+  border-radius: 999px;
+}
+.tabs .subtab.on { background: var(--amber-soft); color: var(--ink); }
+.tabs .subtab.on .num { color: var(--ink); }
+
 .status {
   display: flex;
   gap: 18px;
