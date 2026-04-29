@@ -1241,3 +1241,394 @@ body {
   letter-spacing: 0.02em;
   line-height: 1.4;
 }
+
+/* ---------- Extensions view (cards + sub-tabs + toggle widget) ----------
+   Anchored to /home/voxdecaelo/claude-dashboard-design/index.html lines
+   456-518. The .card-toggle widget at .ext-shell scope (so existing inline
+   toggles elsewhere don't accidentally pick up the styles). */
+
+.ext-shell { min-height: calc(100vh - 64px); }
+.ext { padding: 56px 64px 120px 64px; max-width: 1280px; margin: 0 auto; }
+.ext h1 {
+  font-family: "Instrument Serif", serif;
+  font-size: 80px;
+  line-height: 0.92;
+  letter-spacing: -0.03em;
+  margin: 0 0 40px 0;
+  color: var(--paper);
+}
+.ext h1 em { font-style: italic; color: var(--amber); }
+
+.ext-tabs {
+  display: flex;
+  gap: 28px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid var(--line);
+}
+.ext-tabs button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 14px 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  cursor: pointer;
+  position: relative;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.ext-tabs button:hover { color: var(--paper-dim); }
+.ext-tabs button.on {
+  color: var(--paper);
+  border-bottom-color: var(--amber);
+}
+.ext-tabs .count {
+  color: var(--paper-faint);
+  margin-left: 8px;
+  font-size: 10px;
+}
+.ext-tabs button.on .count { color: var(--amber); }
+
+.ext-error {
+  margin: 12px 0 18px 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(207, 103, 71, 0.35);
+  border-radius: 6px;
+  background: rgba(207, 103, 71, 0.08);
+  color: var(--rust);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+
+.ext-empty {
+  padding: 48px 32px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--ink-2), rgba(17, 17, 22, 0.4));
+  text-align: center;
+  color: var(--paper-faint);
+}
+.ext-empty p {
+  font-family: "Instrument Serif", serif;
+  font-style: italic;
+  font-size: 17px;
+  line-height: 1.5;
+  margin: 0;
+  color: var(--paper-faint);
+}
+.ext-empty code {
+  font-family: "JetBrains Mono", monospace;
+  font-style: normal;
+  font-size: 12px;
+  color: var(--paper-dim);
+  background: var(--ink-3);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.ext .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 18px;
+}
+
+.ext .card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--ink-2), rgba(17, 17, 22, 0.4));
+  padding: 22px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 160ms ease, transform 160ms ease, opacity 160ms ease;
+}
+.ext .card:hover {
+  border-color: var(--paper-faint);
+  transform: translateY(-2px);
+}
+.ext .card.off { opacity: 0.55; }
+.ext .card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.ext .card-glyph {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-family: "Instrument Serif", serif;
+  font-style: italic;
+  font-size: 22px;
+  color: var(--amber);
+  flex-shrink: 0;
+}
+.ext .card h3 {
+  font-family: "Instrument Serif", serif;
+  font-size: 26px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin: 0 0 4px 0;
+  color: var(--paper);
+}
+.ext .card .src {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  word-break: break-all;
+}
+.ext .card p {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 13px;
+  color: var(--paper-dim);
+  line-height: 1.55;
+  margin: 10px 0 16px 0;
+}
+.ext .card .meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+}
+.ext .card .meta-row span b {
+  color: var(--paper-dim);
+  font-weight: 400;
+  margin-right: 4px;
+}
+
+/* Card toggle widget (mockup .card-toggle 36×20px pill).
+   Implemented as a <button> for keyboard accessibility. */
+.ext .card-toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  appearance: none;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.ext .card-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--paper-faint);
+  transition: left 160ms ease, background 160ms ease;
+}
+.ext .card-toggle.on {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+.ext .card-toggle.on::after {
+  left: 18px;
+  background: var(--ink);
+}
+.ext .card-toggle:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+/* ---------- Inspector folded-scalar fix row ---------- */
+.insp-fix-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.insp-fix-btn {
+  appearance: none;
+  background: var(--rust);
+  color: var(--ink);
+  border: 0;
+  border-radius: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease;
+}
+.insp-fix-btn:hover:not(:disabled) {
+  background: #e88067;
+}
+.insp-fix-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- Paths-proposals pill + panel (HeaderChrome) ---------- */
+.proposals-pill-wrap {
+  position: relative;
+}
+.proposals-pill {
+  border-color: rgba(240, 168, 58, 0.45) !important;
+  color: var(--amber) !important;
+}
+.proposals-pill .dot.warn {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(240, 168, 58, 0.18);
+}
+
+.proposals-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 420px;
+  max-height: 480px;
+  overflow-y: auto;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  z-index: 80;
+  padding: 12px 0;
+}
+.proposals-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 16px 10px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  border-bottom: 1px dashed var(--line);
+}
+.proposals-head .dim { color: var(--amber); }
+.proposals-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.proposal-row {
+  padding: 14px 16px;
+  border-bottom: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.proposal-row:last-child { border-bottom: none; }
+.proposal-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.proposal-path {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper);
+  word-break: break-all;
+  line-height: 1.4;
+}
+.proposal-conf {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.proposal-conf.conf-high {
+  background: rgba(199, 227, 107, 0.16);
+  color: var(--lime);
+}
+.proposal-conf.conf-medium {
+  background: rgba(240, 168, 58, 0.16);
+  color: var(--amber);
+}
+.proposal-conf.conf-low {
+  background: rgba(207, 103, 71, 0.16);
+  color: var(--rust);
+}
+.proposal-globs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: var(--paper-dim);
+}
+.proposal-glob-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.proposal-broken {
+  color: var(--rust);
+  text-decoration: line-through;
+  text-decoration-color: rgba(207, 103, 71, 0.6);
+}
+.proposal-arrow {
+  color: var(--paper-faint);
+}
+.proposal-proposed {
+  color: var(--lime);
+}
+.proposal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.proposal-apply,
+.proposal-dismiss {
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.proposal-apply {
+  background: var(--amber);
+  color: var(--ink);
+  border-color: var(--amber);
+  font-weight: 500;
+}
+.proposal-apply:hover:not(:disabled) {
+  background: #ffb84a;
+}
+.proposal-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.proposal-dismiss {
+  background: transparent;
+  color: var(--paper-faint);
+}
+.proposal-dismiss:hover {
+  color: var(--paper);
+  border-color: var(--paper-faint);
+}

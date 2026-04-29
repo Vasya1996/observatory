@@ -112,3 +112,60 @@ export interface UiState {
   map_mode?: MapMode;
   inspector_open?: boolean;
 }
+
+// --- Extensions view (mirrors backend ExtensionsResponse shape) -----------
+
+export interface SkillCard {
+  plugin_id: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  manifest_path: string;
+}
+
+export interface PluginCard {
+  plugin_key: string;
+  plugin_id: string | null;
+  marketplace: string | null;
+  enabled: boolean;
+  installed: boolean;
+}
+
+export interface McpCard {
+  name: string;
+  config: Record<string, unknown>;
+}
+
+export interface ExtensionsResponse {
+  skills: SkillCard[];
+  plugins: PluginCard[];
+  mcp: McpCard[];
+}
+
+// --- /api/file ------------------------------------------------------------
+
+export interface FileReadResponse {
+  path: string;
+  display: string;
+  content: string;
+  frontmatter: Record<string, unknown> | null;
+  validation: Issue[];
+}
+
+// --- Paths-rewrite proposals ----------------------------------------------
+
+export type PathProposalConfidence = "high" | "medium" | "low";
+
+export interface PathProposal {
+  rule_path: string;
+  rule_id: string;
+  current_globs: string[];
+  broken_globs: string[];
+  proposed_globs: string[];
+  match_basis: string;
+  confidence: PathProposalConfidence;
+}
+
+export interface PathProposalsResponse {
+  proposals: PathProposal[];
+}

@@ -19,7 +19,10 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import type cytoscape from "cytoscape";
+import YAML from "yaml";
 import { useStore } from "../state/store";
+import { fetchFile } from "../api/client";
+import { useWritePipeline } from "../hooks/useWritePipeline";
 import { computeAmbiguousBasenames, displayLabel } from "./labels";
 import type { Edge, FileEntry, FileKind, Issue, LoadStatus } from "../types";
 
@@ -550,12 +553,18 @@ function KindLead({
     );
   }
 
-  // SKILL: description value + folded-scalar warning if present.
+  // SKILL: description value + folded-scalar warning if present, with Fix
+  // button when the validator emitted a folded-scalar issue (locked rule #36 +
+  // #37 — full DiffModal pipeline so multi-line YAML rewrites land
+  // confirmable).
   if (file.kind === "skill") {
     const fm = file.frontmatter ?? {};
     const desc = typeof fm.description === "string" ? fm.description : null;
     const foldedIssue = file.validation.find(
-      (v) => v.code.startsWith("skill_frontmatter") || v.code.includes("folded"),
+      (v) =>
+        v.code === "skill_description_folded" ||
+        v.code.startsWith("skill_frontmatter") ||
+        v.code.includes("folded"),
     );
     return (
       <section className="insp-section">
@@ -563,11 +572,7 @@ function KindLead({
         <div className="insp-skill-desc">
           {desc ?? <span className="faint">(no description)</span>}
         </div>
-        {foldedIssue && (
-          <div className="insp-warn-banner">
-            folded scalar — Paperclip parser breaks. Auto-fix available in Phase 2.
-          </div>
-        )}
+        {foldedIssue && <SkillFoldedFixRow file={file} />}
       </section>
     );
   }
@@ -714,6 +719,153 @@ function formatEdgeMeta(e: Edge): string {
   const shown = lines.slice(0, 6);
   const tail = lines.length > 6 ? ` +${lines.length - 6}` : "";
   return `L${shown.join(", L")}${tail}`;
+}
+
+// --- skill folded-scalar fix ------------------------------------------------
+
+// Inline "Fix" button next to the folded-scalar warning. Clicks read the
+// SKILL.md content via /api/file, re-serialize the frontmatter forcing the
+// `description` field to a single-line quoted scalar, and route the rewrite
+// through `useWritePipeline` (full DiffModal — multi-line content change).
+function SkillFoldedFixRow({ file }: { file: FileEntry }) {
+  const { requestWrite } = useWritePipeline();
+  const pushToast = useStore((s) => s.pushToast);
+  const [busy, setBusy] = useState(false);
+
+  const onFix = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const fileRes = await fetchFile(file.path);
+      const flattened = flattenSkillDescription(fileRes.content);
+      if (flattened === null) {
+        pushToast({
+          kind: "info",
+          message: "No folded scalar found — file may already be fixed.",
+        });
+        return;
+      }
+      if (flattened === fileRes.content) {
+        pushToast({
+          kind: "info",
+          message: "No folded scalar found — file may already be fixed.",
+        });
+        return;
+      }
+      await requestWrite([
+        {
+          path: file.path,
+          newContent: flattened,
+          title: "Fix folded-scalar description",
+        },
+      ]);
+    } catch (e) {
+      pushToast({
+        kind: "error",
+        message: `Fix failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="insp-warn-banner insp-fix-row">
+      <span>folded scalar — Paperclip parser breaks.</span>
+      <button
+        type="button"
+        className="insp-fix-btn"
+        onClick={onFix}
+        disabled={busy}
+        aria-label="Auto-fix folded-scalar description"
+      >
+        {busy ? "Reading…" : "Fix"}
+      </button>
+    </div>
+  );
+}
+
+// Pure helper: take a SKILL.md file's full text, parse the frontmatter, and
+// rewrite it so `description` is a quoted single-line string. Returns null
+// when no frontmatter is present, returns the input unchanged when no folded
+// scalar was used.
+export function flattenSkillDescription(text: string): string | null {
+  const match = /^(---\s*\n)([\s\S]*?)(\n---\s*\n?)([\s\S]*)$/.exec(text);
+  if (!match) return null;
+  const [, openFence, fmBlock, closeFence, body] = match;
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(fmBlock);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const fm = parsed as Record<string, unknown>;
+  if (typeof fm.description !== "string") {
+    return null;
+  }
+  // Detect folded vs already-flat by scanning the raw frontmatter block. If
+  // the description value's first non-space char isn't `>` or `|`, the file
+  // already uses a flat string — return the original text untouched so the
+  // caller can show the "already fixed" toast.
+  const raw = /^[ \t]*description:\s*(.*)$/m.exec(fmBlock);
+  const firstChar = raw ? raw[1].trimStart()[0] ?? "" : "";
+  const wasFolded = firstChar === ">" || firstChar === "|";
+  if (!wasFolded) {
+    return text;
+  }
+  const flat = fm.description.replace(/\s+/g, " ").trim();
+  // Re-serialise. We replace the original `description: > … <blank>` block
+  // with `description: "<flat>"`. Use a regex with the m flag and a custom
+  // matcher because YAML's full re-stringification re-orders fields and
+  // re-flows whitespace — minimising the diff matters here.
+  const before = fmBlock;
+  // Match `description:` plus the rest of its block. A folded/literal scalar
+  // ends at the first line that isn't more indented than the key. We match
+  // greedily up to the next field at the same (or shallower) indent.
+  const replaced = replaceDescriptionBlock(before, flat);
+  if (replaced === before) return text; // already flat
+  return openFence + replaced + closeFence + body;
+}
+
+// Replace the `description:` block in a frontmatter string with a quoted
+// single-line form. Walks line-by-line so we can detect the end of an indented
+// scalar block by hitting the next top-level (or shallower-indented) field.
+function replaceDescriptionBlock(fmBlock: string, flat: string): string {
+  const lines = fmBlock.split("\n");
+  let startIdx = -1;
+  let baseIndent = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = /^([ \t]*)description:/.exec(lines[i]);
+    if (m) {
+      startIdx = i;
+      baseIndent = m[1].length;
+      break;
+    }
+  }
+  if (startIdx < 0) return fmBlock;
+  let endIdx = lines.length;
+  // Look for the first line AFTER startIdx whose indent is <= baseIndent and
+  // which contains a `key:` at that indent.
+  for (let i = startIdx + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.trim() === "") continue;
+    const indentMatch = /^([ \t]*)/.exec(line);
+    const indent = indentMatch ? indentMatch[1].length : 0;
+    if (indent <= baseIndent && /^[ \t]*[A-Za-z0-9_-]+:/.test(line)) {
+      endIdx = i;
+      break;
+    }
+  }
+  const before = lines.slice(0, startIdx);
+  const after = lines.slice(endIdx);
+  const indentSpaces = " ".repeat(baseIndent);
+  // Quote with double quotes; escape embedded `"` and `\\`.
+  const escaped = flat.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const replacement = `${indentSpaces}description: "${escaped}"`;
+  return [...before, replacement, ...after].join("\n");
 }
 
 // --- empty state -----------------------------------------------------------

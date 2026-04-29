@@ -1,4 +1,12 @@
-import type { CwdEntry, IndexResponse, SimulatorResponse, UiState } from "../types";
+import type {
+  CwdEntry,
+  ExtensionsResponse,
+  FileReadResponse,
+  IndexResponse,
+  PathProposalsResponse,
+  SimulatorResponse,
+  UiState,
+} from "../types";
 
 export async function fetchIndex(): Promise<IndexResponse> {
   const r = await fetch("/api/index");
@@ -31,6 +39,24 @@ export async function fetchCwds(): Promise<CwdEntry[]> {
 export async function fetchSimulate(cwd: string): Promise<SimulatorResponse> {
   const r = await fetch(`/api/simulate?cwd=${encodeURIComponent(cwd)}`);
   if (!r.ok) throw new Error(`/api/simulate ${r.status}`);
+  return r.json();
+}
+
+export async function fetchExtensions(): Promise<ExtensionsResponse> {
+  const r = await fetch("/api/extensions");
+  if (!r.ok) throw new Error(`/api/extensions ${r.status}`);
+  return r.json();
+}
+
+export async function fetchPathProposals(): Promise<PathProposalsResponse> {
+  const r = await fetch("/api/paths-proposals");
+  if (!r.ok) throw new Error(`/api/paths-proposals ${r.status}`);
+  return r.json();
+}
+
+export async function fetchFile(path: string): Promise<FileReadResponse> {
+  const r = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
+  if (!r.ok) throw new Error(`/api/file ${r.status}`);
   return r.json();
 }
 
