@@ -17,8 +17,21 @@ from pathlib import Path
 from typing import Optional
 
 from . import config, hooks, scanner
-from .models import Edge, FileEntry, Issue, PathsStatus
+from .models import Edge, FileEntry, FileKind, Issue, PathsStatus
 from .parser import ParsedFile, file_id, parse_json_only_metadata, parse_markdown
+
+# Phase 2: kinds the user can edit through Observatory. Other kinds are
+# Claude-Code-managed (plugin manifests/registry, automemory) or are scripts
+# whose source-of-truth lives outside the dashboard (script).
+WRITABLE_KINDS: frozenset[FileKind] = frozenset({
+    "claude_md",
+    "rule",
+    "memory",
+    "memory_index",
+    "settings",
+    "mcp",
+    "skill",
+})
 
 
 def _filename_scope(name: str) -> Optional[str]:
@@ -255,6 +268,7 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
                 validation=p.issues,
                 display_name=p.display_name,
                 cached_versions=p.cached_versions,
+                writable=(p.kind in WRITABLE_KINDS) and not p.readonly,
             )
         )
 
@@ -302,6 +316,7 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
             validation=[],
             display_name=None,
             cached_versions=1,
+            writable=False,
         )
         return sid
 

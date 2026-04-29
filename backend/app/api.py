@@ -1,31 +1,92 @@
-"""HTTP routers — read-only in MVP."""
+"""HTTP routers — read-only on most endpoints; Phase 2 adds preview + write."""
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
-from . import config, scanner
+from . import config, scanner, writer
 from .models import (
     CwdEntry,
     ExtensionsResponse,
     FileReadResponse,
     IndexResponse,
     McpCard,
+    PendingWrite,
     PluginCard,
+    PreviewRequest,
+    PreviewResponse,
     SimulatorResponse,
     SkillCard,
     UiState,
+    WriteRequest,
+    WriteResponse,
 )
 from .resolver import parsed_for_path
 from .simulator import simulate
 from .state import load as state_load
 from .state import save as state_save
 from .watcher import IndexCache
+
+# In-memory pending-write store. TTL = 5 min, lazy-expired on read. Lives at
+# module scope deliberately — uvicorn workers run in a single process; we
+# don't need anything more durable for a personal tool, and it dies on every
+# backend restart (which is the desired behaviour: stale tokens get purged).
+PENDING_WRITES: dict[str, PendingWrite] = {}
+PENDING_WRITE_TTL = timedelta(minutes=5)
+
+# Allowed creation zones — we let the user create new files only in these
+# subtrees. Everywhere else, /api/preview rejects creation requests with 403.
+# Resolved at module import; lookups normalise the proposed path through
+# `expanduser().resolve()` first.
+_CREATION_ALLOWED_ROOTS = (
+    config.CLAUDE_DIR / "rules",
+    config.CLAUDE_DIR / "knowledge",
+)
+
+
+def _is_under_allowed_creation_zone(target: Path) -> bool:
+    """True if `target` lives under any allowed creation root, including
+    project-zone `<cwd>/.claude/rules/`. Both the static user-level roots
+    above and per-cwd rules dirs are allowed."""
+    try:
+        resolved = target.resolve()
+    except OSError:
+        return False
+    for root in _CREATION_ALLOWED_ROOTS:
+        try:
+            resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    # Per-cwd rules directories. Re-derive on every call so a cwd added
+    # mid-session also qualifies.
+    for cwd in scanner.discover_cwds():
+        per_repo_rules = (cwd / ".claude" / "rules").resolve()
+        try:
+            resolved.relative_to(per_repo_rules)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _purge_expired_pending() -> None:
+    """Lazy expiry — drops every PENDING_WRITES entry older than TTL."""
+    now = datetime.now(timezone.utc)
+    expired = [
+        token for token, pw in PENDING_WRITES.items()
+        if now - pw.created_at > PENDING_WRITE_TTL
+    ]
+    for token in expired:
+        PENDING_WRITES.pop(token, None)
 
 router = APIRouter()
 
@@ -164,6 +225,138 @@ def get_state() -> UiState:
 def post_state(state: UiState) -> UiState:
     state_save(state)
     return state
+
+
+@router.post("/preview", response_model=PreviewResponse)
+def post_preview(req: Request, body: PreviewRequest) -> PreviewResponse:
+    """Dry-run a write. Validates target, computes a unified diff against the
+    current on-disk content (or empty string for creation), stores a 5-min
+    pending-write token, and returns the diff for the frontend to confirm.
+
+    Phase 2 invariant: every write must be preceded by a preview. The token
+    is bound to the new content + base hash so a hash mismatch on the actual
+    write rejects with 409.
+    """
+    _purge_expired_pending()
+    target = Path(body.path).expanduser().resolve()
+    files, _, _ = _cache(req).snapshot()
+    in_scope = {Path(f.path): f for f in files}
+
+    is_creation = not target.is_file()
+
+    if is_creation:
+        if not _is_under_allowed_creation_zone(target):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "creation only allowed under ~/.claude/rules/, "
+                    "~/.claude/knowledge/, or <cwd>/.claude/rules/"
+                ),
+            )
+        current = ""
+        base_hash = writer.compute_content_hash("")
+    else:
+        entry = in_scope.get(target)
+        if entry is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"path not in scanned set: {body.path}",
+            )
+        if not entry.writable:
+            raise HTTPException(
+                status_code=403,
+                detail=f"file kind '{entry.kind}' is not writable",
+            )
+        try:
+            current = target.read_text(encoding="utf-8")
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"read error: {e}")
+        base_hash = writer.compute_content_hash(current)
+
+    diff_lines = difflib.unified_diff(
+        current.splitlines(keepends=True),
+        body.new_content.splitlines(keepends=True),
+        fromfile=f"a/{config.collapse_home(target)}",
+        tofile=f"b/{config.collapse_home(target)}",
+        n=3,
+    )
+    diff = "".join(diff_lines)
+
+    confirm_token = uuid.uuid4().hex
+    PENDING_WRITES[confirm_token] = PendingWrite(
+        path=str(target),
+        new_content=body.new_content,
+        base_hash=base_hash,
+        is_creation=is_creation,
+        created_at=datetime.now(timezone.utc),
+    )
+    return PreviewResponse(
+        confirm_token=confirm_token,
+        diff=diff,
+        base_hash=base_hash,
+        is_creation=is_creation,
+    )
+
+
+@router.post("/write", response_model=WriteResponse)
+def post_write(req: Request, body: WriteRequest) -> WriteResponse:
+    """Commit a previewed write. Re-checks current hash against the token's
+    `base_hash` (409 on mismatch), takes a snapshot, then atomically replaces
+    the file. Snapshot-before-write is non-negotiable — if the snapshot fails
+    we abort.
+    """
+    _purge_expired_pending()
+    pending = PENDING_WRITES.get(body.confirm_token)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="confirm_token unknown or expired")
+
+    target = Path(pending.path)
+    if not pending.is_creation:
+        # Re-read current content. If file vanished between preview and write
+        # we treat it as a hard conflict — refuse to recreate silently.
+        if not target.is_file():
+            raise HTTPException(
+                status_code=409,
+                detail="file was deleted after preview; aborting to be safe",
+            )
+        current_hash = writer.read_current_hash(target)
+        if current_hash != pending.base_hash:
+            raise HTTPException(
+                status_code=409,
+                detail="file changed on disk after preview; re-preview required",
+            )
+    else:
+        # Creation case: if the file appeared on disk between preview and
+        # write we also refuse — somebody else created it first.
+        if target.is_file():
+            raise HTTPException(
+                status_code=409,
+                detail="file appeared on disk after preview; re-preview required",
+            )
+
+    try:
+        snapshot_id = writer.take_snapshot(target)
+    except OSError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"snapshot failed, write aborted: {e}",
+        )
+
+    try:
+        writer.atomic_write(target, pending.new_content)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"write failed: {e}")
+
+    # Trigger an immediate reindex so the file's new content / new node shows
+    # up without waiting for the watcher's debounce to fire.
+    try:
+        _cache(req).rebuild_sync()
+    except Exception:
+        # A rebuild failure shouldn't undo a successful write — log and move on.
+        pass
+
+    PENDING_WRITES.pop(body.confirm_token, None)
+    return WriteResponse(written=True, snapshot_id=snapshot_id)
 
 
 @router.get("/events")

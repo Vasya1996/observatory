@@ -21,6 +21,9 @@ BLACKLIST_DIRS = [
     CLAUDE_DIR / "file-history",
     CLAUDE_DIR / "remote" / "file-history",
     CLAUDE_DIR / "plugins" / "cache",
+    # Phase 2 writer's snapshot store. Defensive: if a user happens to drop
+    # markdown in here we still don't want it to appear as a graph node.
+    CLAUDE_DIR / ".observatory",
     # Everything under projects/ except the auto-memory subdir.
     # Enforced by an explicit check in scanner.py rather than this list.
 ]

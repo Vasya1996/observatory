@@ -1,6 +1,7 @@
 """Pydantic data shapes — mirrors of the TS interfaces in the frontend."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -57,6 +58,14 @@ class FileEntry(BaseModel):
     # >1 only for `~/.claude/remote/plugins/<hash>/manifest.json` collapsed
     # by plugin name; 1 elsewhere. Inspector can surface as "26 cached versions".
     cached_versions: int = 1
+    # Phase 2 write-pipeline gate: True for kinds Vasya is allowed to edit
+    # through Observatory (claude_md / rule / memory / memory_index / settings
+    # / mcp / skill); False for Claude-Code-managed or risky kinds (automemory,
+    # plugin_registry, plugin_manifest, script). The /api/preview endpoint
+    # rejects writes to non-writable entries with 403. Default True so older
+    # `.state.json` payloads (and any caller still on the previous schema) keep
+    # parsing — `scanner` / `resolver` set the actual value per-kind.
+    writable: bool = True
 
 
 class Edge(BaseModel):
@@ -156,3 +165,38 @@ class UiState(BaseModel):
     # radial three-zone tree (user-side / project-side / settings-side) showing
     # Claude Code's real load hierarchy. Persisted so the toggle survives reloads.
     map_mode: Literal["graph", "tree"] = "graph"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 write pipeline — preview & write
+# ---------------------------------------------------------------------------
+
+
+class PreviewRequest(BaseModel):
+    path: str
+    new_content: str
+
+
+class PreviewResponse(BaseModel):
+    confirm_token: str
+    diff: str
+    base_hash: str
+    # True when the path doesn't yet exist on disk (file creation case).
+    is_creation: bool = False
+
+
+class WriteRequest(BaseModel):
+    confirm_token: str
+
+
+class WriteResponse(BaseModel):
+    written: bool
+    snapshot_id: str
+
+
+class PendingWrite(BaseModel):
+    path: str
+    new_content: str
+    base_hash: str
+    is_creation: bool
+    created_at: datetime
