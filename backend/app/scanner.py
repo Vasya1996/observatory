@@ -281,21 +281,18 @@ def scan_roots() -> list[Path]:
 
 
 def discover_cwds() -> list[Path]:
-    """Return the list of project directories the user can pick as cwd.
+    """Every direct, non-hidden child of `~/` — the same set the Claude Code
+    desktop file picker shows.
 
-    A "project" is a direct child of `~/` that is a git repository (has a
-    `.git/` subdir). We deliberately do NOT include `~/` itself, `~/.claude`,
-    or arbitrary subdirs that merely happen to contain a CLAUDE.md — those
-    are user-config / knowledge-base dirs where users don't run Claude Code
-    sessions. The earlier walker (CLAUDE.md/.claude/ detection up to
-    DISCOVERY_MAX_DEPTH) over-included nested config-only folders like
-    `~/Claude/global/`. The git-repo heuristic mirrors how engineers actually
-    organize project roots and matches what the user expects to see in the
-    cwd selector.
+    Hidden dirs (dotfile stashes, `.claude` user-config, `.cache`, `.ssh`,
+    etc.) are excluded — those are configuration / OS plumbing, never
+    session targets. Everything else under `~/` is included regardless of
+    whether it has Claude config: the user might run a session in a fresh
+    bare folder and want Observatory to show them what's missing. A
+    follow-up commit will tag each entry with a setup status
+    (configured / git-only / bare) so the UI can sort and badge them.
 
-    Files inside a project (project-CLAUDE.md, .claude/rules/*.md) STILL
-    appear on the graph — that's a separate scanner-zone expansion concern,
-    not a cwd-discovery concern. This function only governs the dropdown.
+    Alphabetical by name for stable UI.
     """
     home = config.HOME
     found: list[Path] = []
@@ -307,15 +304,10 @@ def discover_cwds() -> list[Path]:
         if not e.is_dir():
             continue
         if e.name.startswith("."):
-            # Hidden dirs (`.claude`, `.config`, dotfile stashes) are never
-            # session cwds. `.claude` in particular is user-level config, not
-            # a project.
             continue
         if e.name in config.DISCOVERY_SKIP_DIRS:
             continue
         if config.is_blacklisted(e):
             continue
-        if not (e / ".git").is_dir():
-            continue
         found.append(e)
-    return sorted(found, key=lambda p: str(p))
+    return sorted(found, key=lambda p: p.name.lower())
