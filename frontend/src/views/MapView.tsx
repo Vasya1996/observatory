@@ -179,13 +179,15 @@ export function MapView() {
   }, []);
 
   // Right-click on an explorer tree row.
-  const handleExplorerContextMenu = useCallback((e: React.MouseEvent, file: FileEntry) => {
+  // pluginManaged: true when the file is under ~/.claude/plugins/cache/ —
+  // those files are managed by Claude Code and must not be deleted via Observatory.
+  const handleExplorerContextMenu = useCallback((e: React.MouseEvent, file: FileEntry, pluginManaged?: boolean) => {
     e.preventDefault();
     const displayName = file.display_name ?? file.path.split("/").pop() ?? file.path;
     setCtxTarget({
       path: file.path,
       displayName,
-      writable: file.writable ?? true,
+      writable: pluginManaged ? false : (file.writable ?? true),
       x: e.clientX,
       y: e.clientY,
     });

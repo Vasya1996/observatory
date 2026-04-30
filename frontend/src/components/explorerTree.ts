@@ -1,16 +1,20 @@
 /**
  * explorerTree.ts — Build a hierarchical tree from a flat FileEntry list.
  *
- * Groups files by their filesystem location into four top-level zones that
- * match how Claude Code actually organises config:
- *   • User config — ~/.claude/ (CLAUDE.md, rules/, knowledge/)
- *   • Projects — per-discovered-project files
- *   • Settings — settings.json, .mcp.json, skills, plugins
- *   • Other — anything that doesn't fit the above
+ * Three always-visible zones (locked rule #50):
+ *   • USER CONFIG  — ~/.claude/ but NOT ~/.claude/plugins/cache/
+ *                    Always visible regardless of cwd.
+ *   • PROJECT      — files under the actively-selected cwd (and not in
+ *                    user-config or settings regions).
+ *                    When cwd changes, this zone refreshes.
+ *   • SETTINGS & PLUGINS — settings.json, .mcp.json, plugins/cache/...,
+ *                    OS-managed CLAUDE.md. Always visible.
+ *   • OTHER        — safety net for files that don't fit any zone.
+ *                    Auto-collapsed.
  *
- * The grouping is purely frontend (locked rule #30 — no backend restructuring).
- * Paths are derived from the FileEntry.path field; home prefix is inferred from
- * the file list (locked rule #47 — no hardcoded /home/voxdecaelo).
+ * Grouping is purely frontend (locked rule #30 — no backend restructuring).
+ * Paths are derived from FileEntry.path; home prefix inferred from the file
+ * list (locked rule #47 — no hardcoded /home/voxdecaelo).
  */
 
 import type { FileEntry } from "../types";
@@ -18,30 +22,29 @@ import type { FileEntry } from "../types";
 export interface TreeNode {
   id: string;           // file id (from FileEntry)
   path: string;
-  display: string;      // basename
+  display: string;      // basename or display_name
   kind: FileEntry["kind"];
-  isOrphan: boolean;    // never loaded in any cwd (from orphan_configs)
+  isOrphan: boolean;
   file: FileEntry;
-  children: TreeNode[]; // sub-folders (synthetic, no file backing)
+  children: TreeNode[]; // unused (files are leaves); kept for type compat
 }
 
 export interface TreeFolder {
-  id: string;           // synthetic: "folder:" + path
-  label: string;        // display label, e.g. "rules"
+  id: string;           // "folder:" + absolute path
+  label: string;        // directory name segment
   fullPath: string;     // absolute path of the folder
   children: (TreeFolder | TreeNode)[];
   defaultOpen: boolean;
 }
 
 export interface TreeGroup {
-  id: string;           // e.g. "user-config", "projects", "settings", "other"
+  id: string;           // "user-config" | "project" | "settings" | "other"
   label: string;        // human-readable group header
   defaultOpen: boolean;
   children: (TreeFolder | TreeNode)[];
-  count: number;        // total file count including nested
+  count: number;
 }
 
-/** Derive the home directory prefix from observed absolute paths. */
 export function deriveHomeFromFiles(files: FileEntry[]): string {
   for (const f of files) {
     const m = f.path.match(/^(\/home\/[^/]+)\//);
@@ -56,7 +59,7 @@ function basename(p: string): string {
   return p.split("/").pop() ?? p;
 }
 
-function collapseToHome(p: string, home: string): string {
+export function collapseToHome(p: string, home: string): string {
   if (home && p === home) return "~";
   if (home && p.startsWith(home + "/")) return "~" + p.slice(home.length);
   return p;
@@ -74,58 +77,6 @@ function countItems(items: (TreeFolder | TreeNode)[]): number {
   return n;
 }
 
-/**
- * Given a list of files (with paths sorted within their group), build a
- * nested folder tree. Files that share a parent directory are grouped under
- * a synthetic TreeFolder node. Only creates folder nodes when there is more
- * than one sibling under the same parent — single files sit flat.
- */
-function buildFolderTree(
-  files: FileEntry[],
-  basePath: string,
-  orphanIds: Set<string>,
-): (TreeFolder | TreeNode)[] {
-  type DirMap = Map<string, FileEntry[]>;
-  const byDir: DirMap = new Map();
-
-  for (const f of files) {
-    let rel = f.path.startsWith(basePath + "/")
-      ? f.path.slice(basePath.length + 1)
-      : f.path;
-    const slashIdx = rel.indexOf("/");
-    const dir = slashIdx !== -1 ? rel.slice(0, slashIdx) : "";
-    const key = dir;
-    if (!byDir.has(key)) byDir.set(key, []);
-    byDir.get(key)!.push(f);
-  }
-
-  const result: (TreeFolder | TreeNode)[] = [];
-
-  for (const [dir, group] of byDir) {
-    if (dir === "") {
-      for (const f of group) {
-        result.push(fileToNode(f, orphanIds));
-      }
-    } else {
-      const folderPath = basePath + "/" + dir;
-      const subItems = buildFolderTree(group, folderPath, orphanIds);
-      if (subItems.length === 1 && "file" in subItems[0]) {
-        result.push(subItems[0]);
-      } else {
-        result.push({
-          id: "folder:" + folderPath,
-          label: dir,
-          fullPath: folderPath,
-          defaultOpen: false,
-          children: subItems,
-        });
-      }
-    }
-  }
-
-  return result;
-}
-
 function fileToNode(f: FileEntry, orphanIds: Set<string>): TreeNode {
   return {
     id: f.id,
@@ -138,47 +89,158 @@ function fileToNode(f: FileEntry, orphanIds: Set<string>): TreeNode {
   };
 }
 
-const USER_CONFIG_KINDS = new Set<FileEntry["kind"]>([
-  "claude_md",
-  "rule",
-  "memory",
-  "memory_index",
-  "automemory",
-]);
+/**
+ * Build a true nested folder tree from a flat list of files rooted at basePath.
+ * Every distinct directory segment gets its own TreeFolder node.
+ * Single-child folders are NOT flattened — we always show the full path.
+ * Default-open: small folders (≤3 children) auto-expand for usability.
+ */
+function buildFolderTree(
+  files: FileEntry[],
+  basePath: string,
+  orphanIds: Set<string>,
+): (TreeFolder | TreeNode)[] {
+  // Group files by their immediate child segment under basePath.
+  const byFirstSegment = new Map<string, FileEntry[]>();
 
-const SETTINGS_KINDS = new Set<FileEntry["kind"]>([
-  "settings",
-  "mcp",
-  "skill",
-  "plugin_manifest",
-  "plugin_registry",
-  "script",
-]);
+  for (const f of files) {
+    let rel: string;
+    if (f.path.startsWith(basePath + "/")) {
+      rel = f.path.slice(basePath.length + 1);
+    } else if (f.path === basePath) {
+      rel = "";
+    } else {
+      rel = f.path;
+    }
+
+    const slashIdx = rel.indexOf("/");
+    const firstSegment = slashIdx !== -1 ? rel.slice(0, slashIdx) : "";
+    const key = firstSegment;
+    if (!byFirstSegment.has(key)) byFirstSegment.set(key, []);
+    byFirstSegment.get(key)!.push(f);
+  }
+
+  const result: (TreeFolder | TreeNode)[] = [];
+
+  for (const [segment, group] of byFirstSegment) {
+    if (segment === "") {
+      // Files sitting directly in basePath (no subdirectory)
+      for (const f of group) {
+        result.push(fileToNode(f, orphanIds));
+      }
+    } else {
+      const folderPath = basePath + "/" + segment;
+      const subItems = buildFolderTree(group, folderPath, orphanIds);
+      // Auto-expand if ≤3 children (usability for small dirs)
+      const small = subItems.length <= 3;
+      result.push({
+        id: "folder:" + folderPath,
+        label: segment,
+        fullPath: folderPath,
+        defaultOpen: small,
+        children: subItems,
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Returns true if the file belongs to the SETTINGS & PLUGINS zone regardless
+ * of which cwd is active. This covers settings.json, .mcp.json, plugins/cache/,
+ * managed CLAUDE.md at OS paths, and kinds like skill/plugin_manifest.
+ */
+function isSettingsZone(f: FileEntry, home: string): boolean {
+  const claudeDir = home ? home + "/.claude" : "/.claude";
+  const pluginCacheDir = claudeDir + "/plugins/cache";
+
+  // Files inside plugins/cache/ always go to Settings & Plugins
+  if (f.path.startsWith(pluginCacheDir + "/") || f.path === pluginCacheDir) {
+    return true;
+  }
+
+  // settings.json and .mcp.json at the root ~/.claude/
+  const p = f.path;
+  if (p === claudeDir + "/settings.json") return true;
+  if (p === claudeDir + "/settings.local.json") return true;
+  if (p === claudeDir + "/.mcp.json") return true;
+
+  // Kind-based: skills, plugin manifests, plugin registry, MCP, settings, scripts
+  const settingsKinds: FileEntry["kind"][] = [
+    "settings",
+    "mcp",
+    "skill",
+    "plugin_manifest",
+    "plugin_registry",
+    "script",
+  ];
+  if (settingsKinds.includes(f.kind)) return true;
+
+  // OS-managed CLAUDE.md (Linux: /etc/claude-code/CLAUDE.md, macOS: /Library/...)
+  if (
+    f.path === "/etc/claude-code/CLAUDE.md" ||
+    f.path.startsWith("/Library/Application Support/ClaudeCode/") ||
+    f.path.startsWith("C:\\Program Files\\ClaudeCode\\")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Returns true if the file belongs to the USER CONFIG zone:
+ * path under ~/.claude/ but NOT under plugins/cache/.
+ */
+function isUserConfigZone(f: FileEntry, home: string): boolean {
+  const claudeDir = home ? home + "/.claude" : "/.claude";
+  const pluginCacheDir = claudeDir + "/plugins/cache";
+
+  if (!f.path.startsWith(claudeDir + "/") && f.path !== claudeDir + "/CLAUDE.md") {
+    return false;
+  }
+  // Exclude the plugins/cache subtree — those go to Settings & Plugins
+  if (f.path.startsWith(pluginCacheDir + "/") || f.path === pluginCacheDir) {
+    return false;
+  }
+  // Settings kinds (settings.json, .mcp.json) inside ~/.claude/ go to Settings zone
+  if (isSettingsZone(f, home)) return false;
+
+  return true;
+}
+
+/**
+ * Returns true if the file belongs to the PROJECT zone for the given cwd.
+ * Files under the cwd that are not already claimed by User Config or Settings.
+ */
+function isProjectZone(f: FileEntry, activeCwd: string, home: string): boolean {
+  if (!activeCwd) return false;
+  if (isSettingsZone(f, home)) return false;
+  if (isUserConfigZone(f, home)) return false;
+
+  return f.path.startsWith(activeCwd + "/") || f.path === activeCwd;
+}
 
 export function buildExplorerTree(
   files: FileEntry[],
   orphanIds: Set<string>,
+  activeCwd: string | null,
 ): TreeGroup[] {
   const home = deriveHomeFromFiles(files);
   const claudeDir = home ? home + "/.claude" : "/.claude";
 
   const userFiles: FileEntry[] = [];
-  const settingsFiles: FileEntry[] = [];
   const projectFiles: FileEntry[] = [];
+  const settingsFiles: FileEntry[] = [];
   const otherFiles: FileEntry[] = [];
 
   for (const f of files) {
-    if (f.path.startsWith(claudeDir + "/") || f.path === claudeDir + "/CLAUDE.md") {
-      if (USER_CONFIG_KINDS.has(f.kind)) {
-        userFiles.push(f);
-      } else if (SETTINGS_KINDS.has(f.kind)) {
-        settingsFiles.push(f);
-      } else {
-        otherFiles.push(f);
-      }
-    } else if (SETTINGS_KINDS.has(f.kind)) {
+    if (isSettingsZone(f, home)) {
       settingsFiles.push(f);
-    } else if (f.kind === "claude_md" || f.kind === "rule") {
+    } else if (isUserConfigZone(f, home)) {
+      userFiles.push(f);
+    } else if (activeCwd && isProjectZone(f, activeCwd, home)) {
       projectFiles.push(f);
     } else {
       otherFiles.push(f);
@@ -187,6 +249,7 @@ export function buildExplorerTree(
 
   const groups: TreeGroup[] = [];
 
+  // --- USER CONFIG ---
   if (userFiles.length > 0) {
     const children = buildFolderTree(userFiles, claudeDir, orphanIds);
     groups.push({
@@ -198,48 +261,35 @@ export function buildExplorerTree(
     });
   }
 
-  if (projectFiles.length > 0) {
-    const projectsByRoot = new Map<string, FileEntry[]>();
-    for (const f of projectFiles) {
-      let rootDir: string;
-      const clDir = f.path.match(/^(.+)\/.claude\//);
-      const topDir = f.path.match(/^(\/[^/]+(?:\/[^/]+)?)\/CLAUDE/);
-      if (clDir) {
-        rootDir = clDir[1];
-      } else if (topDir) {
-        rootDir = topDir[1];
-      } else {
-        rootDir = f.path.split("/").slice(0, -1).join("/") || "/";
-      }
-      if (!projectsByRoot.has(rootDir)) projectsByRoot.set(rootDir, []);
-      projectsByRoot.get(rootDir)!.push(f);
-    }
+  // --- PROJECT ---
+  {
+    const cwdLabel = activeCwd
+      ? buildProjectLabel(activeCwd, home)
+      : null;
+    const label = cwdLabel ? `Project — ${cwdLabel}` : "Project";
 
-    const children: (TreeFolder | TreeNode)[] = [];
-    for (const [rootDir, grp] of projectsByRoot) {
-      const label = collapseToHome(rootDir, home);
-      const subItems = buildFolderTree(grp, rootDir, orphanIds);
-      if (subItems.length === 1 && projectsByRoot.size === 1) {
-        children.push(...subItems);
-      } else {
-        children.push({
-          id: "folder:" + rootDir,
-          label,
-          fullPath: rootDir,
-          defaultOpen: false,
-          children: subItems,
-        });
-      }
+    if (activeCwd && projectFiles.length > 0) {
+      const children = buildFolderTree(projectFiles, activeCwd, orphanIds);
+      groups.push({
+        id: "project",
+        label,
+        defaultOpen: true,
+        children,
+        count: countItems(children),
+      });
+    } else {
+      // Always show the zone, even when empty, so the user sees it
+      groups.push({
+        id: "project",
+        label,
+        defaultOpen: true,
+        children: [],
+        count: 0,
+      });
     }
-    groups.push({
-      id: "projects",
-      label: "Projects",
-      defaultOpen: true,
-      children,
-      count: countItems(children),
-    });
   }
 
+  // --- SETTINGS & PLUGINS ---
   if (settingsFiles.length > 0) {
     const children = buildFolderTree(settingsFiles, claudeDir, orphanIds);
     groups.push({
@@ -251,6 +301,7 @@ export function buildExplorerTree(
     });
   }
 
+  // --- OTHER (safety net) ---
   if (otherFiles.length > 0) {
     const children = buildFolderTree(otherFiles, home || "/", orphanIds);
     groups.push({
@@ -265,7 +316,13 @@ export function buildExplorerTree(
   return groups;
 }
 
-/** Flatten the tree into ordered (id → path) pairs for scroll-into-view. */
+function buildProjectLabel(cwd: string, home: string): string {
+  const collapsed = collapseToHome(cwd, home);
+  if (collapsed === "~") return "Home folder";
+  return collapsed;
+}
+
+/** Flatten all node ids in order (group headers + folder ids + file ids). */
 export function flattenIds(groups: TreeGroup[]): string[] {
   const ids: string[] = [];
   function walk(items: (TreeFolder | TreeNode)[]) {
@@ -285,7 +342,7 @@ export function flattenIds(groups: TreeGroup[]): string[] {
   return ids;
 }
 
-/** Given a file id, collect the ids of all its ancestor folders and groups. */
+/** Return ids of all ancestor folders/groups for a given file id. */
 export function ancestorIds(groups: TreeGroup[], targetId: string): string[] {
   const ancestors: string[] = [];
 
@@ -310,4 +367,10 @@ export function ancestorIds(groups: TreeGroup[], targetId: string): string[] {
     if (walkItems(g.children, [g.id])) break;
   }
   return ancestors;
+}
+
+/** Check if a file is inside ~/.claude/plugins/cache/ (plugin-managed, read-only). */
+export function isPluginCacheFile(path: string, home: string): boolean {
+  const pluginCacheDir = (home ? home + "/.claude" : "/.claude") + "/plugins/cache";
+  return path.startsWith(pluginCacheDir + "/") || path === pluginCacheDir;
 }

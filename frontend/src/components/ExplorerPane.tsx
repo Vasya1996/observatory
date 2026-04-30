@@ -1,29 +1,29 @@
 /**
- * ExplorerPane — 320px fixed-width left column.
+ * ExplorerPane — 320px fixed-width left column on 01 MAP.
  *
  * Always-on in MapView, left of the canvas. Shows every file from /api/index
- * in a hierarchical tree grouped by filesystem location. Backed by
- * explorerTree.ts (pure, no side effects).
+ * in a hierarchical tree grouped by filesystem zone:
+ *   - USER CONFIG  — ~/.claude/ (excluding plugins/cache)
+ *   - PROJECT      — active cwd's files (refreshes on cwd change)
+ *   - SETTINGS & PLUGINS — settings.json, .mcp.json, plugins/cache/
+ *   - OTHER        — safety net, auto-collapsed
  *
  * Interactions:
  *   single click  → select node in graph + open Inspector (locked rule #24)
- *   double click  → open EditorPanel (locked rule #46, existing component)
+ *   double click  → open EditorPanel (locked rule #46)
  *   hover row     → highlight matching graph node + dim others (bidirectional)
  *   hover graph   → highlight matching tree row + faint amber tint
  *
- * Search: substring filter on basename + path. Filter mode hides non-matches
- * and auto-expands parent folders.
+ * Search: substring filter on basename + path. Auto-expands parent folders.
  *
- * Autoload toggle: rendered per-row (on / off / disabled). Backend contract
- * not yet landed — toggle renders visually but does not fire writes until
- * observatory_phase4_autoload_toggle.md is published by the backend agent.
+ * Expand/collapse: persisted to /api/state via treeExpanded in Zustand.
+ * Small folders (≤3 children) default-open per explorerTree.ts logic.
  *
- * Expand/collapse: persisted to localStorage under key "obs_tree_expanded"
- * (string[]). When backend ships tree_expanded in UiState, migrate to
- * /api/state — the shape is identical.
+ * Orphan indicator: small amber glyph next to filenames that appear in
+ * orphan_configs from /api/non-canonical.
  *
- * Orphan indicator: small static amber glyph "◎" next to filenames that
- * appear in orphan_configs from /api/non-canonical.
+ * Plugin-cache files (under ~/.claude/plugins/cache/): read-only, RMB
+ * context-menu Delete is disabled with "Plugin file — managed by Claude Code".
  */
 
 import {
@@ -42,6 +42,8 @@ import type { FileEntry, OrphanConfigEntry } from "../types";
 import {
   buildExplorerTree,
   ancestorIds,
+  deriveHomeFromFiles,
+  isPluginCacheFile,
   type TreeFolder,
   type TreeGroup,
   type TreeNode,
@@ -51,10 +53,10 @@ import {
 interface Props {
   files: FileEntry[];
   orphanConfigs: OrphanConfigEntry[];
-  /** Row hover → tell parent to highlight the graph node + dim others. */
+  /** Row hover → tell parent to highlight graph node + dim others. */
   onRowHover: (fileId: string | null) => void;
-  /** Right-click on a tree row → parent builds ContextMenuTarget from this. */
-  onRowContextMenu?: (e: React.MouseEvent, file: FileEntry) => void;
+  /** Right-click on a tree row → parent builds ContextMenuTarget. */
+  onRowContextMenu?: (e: React.MouseEvent, file: FileEntry, pluginManaged?: boolean) => void;
 }
 
 export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane({
@@ -68,8 +70,11 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   const setEditorOpen = useStore((s) => s.setEditorOpen);
   const expanded = useStore((s) => s.treeExpanded);
   const setTreeExpanded = useStore((s) => s.setTreeExpanded);
+  const lastCwd = useStore((s) => s.lastCwd);
   const [query, setQuery] = useState("");
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  const home = useMemo(() => deriveHomeFromFiles(files), [files]);
 
   const orphanIds = useMemo(
     () => new Set(orphanConfigs.map((o) => files.find((f) => f.path === o.file_path)?.id ?? "")),
@@ -77,9 +82,41 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   );
 
   const groups = useMemo(
-    () => buildExplorerTree(files, orphanIds),
-    [files, orphanIds],
+    () => buildExplorerTree(files, orphanIds, lastCwd),
+    [files, orphanIds, lastCwd],
   );
+
+  // On first load, seed treeExpanded with the defaultOpen folders from the tree.
+  // We only seed folders that are not already tracked (so user's manual toggles win).
+  useEffect(() => {
+    if (groups.length === 0) return;
+    const next = new Set(expanded);
+    let changed = false;
+
+    function seedDefaults(items: (TreeFolder | TreeNode)[]) {
+      for (const item of items) {
+        if (!("file" in item)) {
+          if (item.defaultOpen && !next.has(item.id)) {
+            next.add(item.id);
+            changed = true;
+          }
+          seedDefaults(item.children);
+        }
+      }
+    }
+
+    for (const g of groups) {
+      if (g.defaultOpen && !next.has(g.id)) {
+        next.add(g.id);
+        changed = true;
+      }
+      seedDefaults(g.children);
+    }
+
+    if (changed) setTreeExpanded(next);
+  // Only run on initial groups build; subsequent calls rely on user interaction.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups]);
 
   function toggleExpand(id: string) {
     const next = new Set(expanded);
@@ -107,8 +144,7 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     return false;
   }
 
-  // When a graph node is selected from outside (e.g. user clicks graph node),
-  // auto-expand ancestors and scroll the row into view.
+  // When a graph node is selected from outside, auto-expand ancestors + scroll.
   useEffect(() => {
     if (!selectedId) return;
     const anc = ancestorIds(groups, selectedId);
@@ -120,18 +156,12 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
       }
       if (changed) setTreeExpanded(next);
     }
-    // Scroll into view after a brief delay to let expansion render.
     const t = setTimeout(() => {
       const el = rowRefs.current.get(selectedId);
       if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }, 80);
     return () => clearTimeout(t);
   }, [selectedId, groups, expanded, setTreeExpanded]);
-
-  // Bidirectional: graph hover → highlight tree row.
-  // GraphCanvas doesn't yet emit hovered-node events outside of cy.
-  // We handle this via a custom event dispatched in GraphCanvas if needed.
-  // For now the graph→tree direction is handled via CSS `.explorer-row.graph-hovered`.
 
   function handleRowClick(file: FileEntry) {
     select(file.id);
@@ -151,7 +181,10 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   }
 
   function handleRowContextMenu(e: React.MouseEvent, file: FileEntry) {
-    if (onRowContextMenu) onRowContextMenu(e, file);
+    if (onRowContextMenu) {
+      const pluginManaged = isPluginCacheFile(file.path, home);
+      onRowContextMenu(e, file, pluginManaged);
+    }
   }
 
   function registerRef(id: string) {
@@ -161,7 +194,6 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     };
   }
 
-  // Total match count for empty-state display.
   let hasAnyMatch = !lq;
   if (lq) {
     for (const g of groups) {
@@ -266,9 +298,11 @@ function GroupRow({
   orphanIds,
   registerRef,
 }: GroupRowProps) {
-  if (query && !folderHasMatch(group.children)) return null;
+  if (query && group.children.length > 0 && !folderHasMatch(group.children)) return null;
 
   const isOpen = expanded.has(group.id);
+  const isEmpty = group.children.length === 0;
+  const isProjectZone = group.id === "project";
 
   return (
     <div className="explorer-group" role="treeitem" aria-expanded={isOpen}>
@@ -283,23 +317,29 @@ function GroupRow({
       </button>
       {isOpen && (
         <div className="explorer-group-body">
-          <ItemList
-            items={group.children}
-            depth={0}
-            expanded={expanded}
-            toggle={toggle}
-            selectedId={selectedId}
-            query={query}
-            matchesSearch={matchesSearch}
-            folderHasMatch={folderHasMatch}
-            onRowClick={onRowClick}
-            onRowDblClick={onRowDblClick}
-            onRowMouseEnter={onRowMouseEnter}
-            onRowMouseLeave={onRowMouseLeave}
-            onRowContextMenu={onRowContextMenu}
-            orphanIds={orphanIds}
-            registerRef={registerRef}
-          />
+          {isEmpty && isProjectZone ? (
+            <div className="explorer-empty explorer-empty-zone">
+              No files Observatory tracks for this folder yet.
+            </div>
+          ) : (
+            <ItemList
+              items={group.children}
+              depth={0}
+              expanded={expanded}
+              toggle={toggle}
+              selectedId={selectedId}
+              query={query}
+              matchesSearch={matchesSearch}
+              folderHasMatch={folderHasMatch}
+              onRowClick={onRowClick}
+              onRowDblClick={onRowDblClick}
+              onRowMouseEnter={onRowMouseEnter}
+              onRowMouseLeave={onRowMouseLeave}
+              onRowContextMenu={onRowContextMenu}
+              orphanIds={orphanIds}
+              registerRef={registerRef}
+            />
+          )}
         </div>
       )}
     </div>
@@ -347,7 +387,6 @@ function ItemList(props: ItemListProps) {
     <>
       {items.map((item) => {
         if ("file" in item) {
-          // TreeNode
           if (query && !matchesSearch(item)) return null;
           return (
             <FileRow
@@ -365,8 +404,9 @@ function ItemList(props: ItemListProps) {
             />
           );
         } else {
-          // TreeFolder
           if (query && !folderHasMatch(item.children)) return null;
+          // In search mode force-expand all folders; otherwise respect expanded set
+          // but also honour the folder's defaultOpen on first render
           const autoExpand = query ? true : expanded.has(item.id);
           return (
             <FolderRow
@@ -433,12 +473,14 @@ function FolderRow({
   registerRef,
 }: FolderRowProps) {
   const indent = 24 + depth * 14;
+  const childCount = countChildFiles(folder.children);
   return (
     <div role="treeitem" aria-expanded={isOpen}>
       <button
         className="explorer-folder-row"
         style={{ paddingLeft: indent }}
         onClick={() => toggle(folder.id)}
+        title={folder.fullPath}
       >
         <span className="explorer-row-chev">{isOpen ? "▾" : "▸"}</span>
         <span className="explorer-folder-icon">
@@ -449,6 +491,7 @@ function FolderRow({
           </svg>
         </span>
         <span className="explorer-folder-label">{folder.label}</span>
+        <span className="explorer-folder-count">{childCount}</span>
       </button>
       {isOpen && (
         <ItemList
@@ -471,6 +514,15 @@ function FolderRow({
       )}
     </div>
   );
+}
+
+function countChildFiles(items: (TreeFolder | TreeNode)[]): number {
+  let n = 0;
+  for (const item of items) {
+    if ("file" in item) n++;
+    else n += countChildFiles(item.children);
+  }
+  return n;
 }
 
 interface FileRowProps {
@@ -498,24 +550,16 @@ function FileRow({
   onRowContextMenu,
   registerRef,
 }: FileRowProps) {
-  const indent = 24 + depth * 14 + 14; // extra 14 for indent past folder chevron
+  const indent = 24 + depth * 14 + 14;
   const iconPath = ICON_PATH_BY_KIND[node.kind] ?? null;
 
-  // autoload_state is the authoritative field once the backend delivers it.
-  // If absent (older backend build), fall back to the paths_status heuristic
-  // so rules behaviour doesn't regress while BE deploys.
   const autoloadState = node.file.autoload_state;
   const alwaysLoaded = autoloadState === "n/a";
-  // Autoload toggle: rule and skill are the most common togglable kinds.
-  // Other kinds return toggle_applicable: false from the backend.
-  // Also not interactive when backend explicitly says "n/a".
   const autoloadApplicable = !alwaysLoaded &&
     node.kind !== "automemory" &&
     node.kind !== "plugin_registry" &&
     node.kind !== "plugin_manifest" &&
     node.kind !== "script";
-  // If autoload_state is present use it directly; otherwise fall back to the
-  // old paths_status proxy (missing = paths glob points nowhere → treat as off).
   const autoloadOn = autoloadState !== undefined
     ? autoloadState === "on"
     : node.file.paths_status !== "missing";
@@ -610,12 +654,11 @@ function AutoloadToggle({ path, applicable, on, writable }: AutoloadToggleProps)
     try {
       const preview = await postAutoloadTogglePreview(path, !on);
       if (!preview.toggle_applicable) {
-        // Backend says not togglable for this file — render as n/a
         return;
       }
       await confirmStagedPreview(path, preview);
     } catch {
-      // Toast is pushed by confirmStagedPreview on failure; nothing extra needed.
+      // Toast is pushed by confirmStagedPreview on failure.
     } finally {
       setLoading(false);
     }

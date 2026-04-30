@@ -4069,6 +4069,25 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.explorer-folder-count {
+  margin-left: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+  flex-shrink: 0;
+}
+
+/* Empty-zone message inside the PROJECT zone when no files are tracked. */
+.explorer-empty-zone {
+  padding: 10px 24px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-faint);
+  font-style: italic;
+  line-height: 1.5;
 }
 
 /* ---------- file rows (matches mockup .node) ---------- */
