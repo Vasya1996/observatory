@@ -45,6 +45,13 @@ interface Store {
   edges: Edge[];
   setIndex: (files: FileEntry[], edges: Edge[]) => void;
 
+  // Phase 4 — file explorer tree expanded state.
+  // Set of folder/group node ids that are expanded. Persisted via /api/state
+  // (tree_expanded: string[]). Initialised from hydrated UiState on boot;
+  // falls back to DEFAULT_OPEN_GROUPS (user-config + projects) when empty.
+  treeExpanded: Set<string>;
+  setTreeExpanded: (ids: Set<string>) => void;
+
   // Currently-inspected file id. Decoupled from `inspectorOpen`: clicking ×
   // hides the pane but keeps the last selection so re-opening restores
   // context. Updated by GraphCanvas tap and by inspector reference rows.
@@ -104,8 +111,11 @@ function snapshot(s: Store): UiState {
     inspector_open: s.inspectorOpen,
     simulator_mode: s.simulatorMode,
     editor_open: s.editorOpen,
+    tree_expanded: [...s.treeExpanded],
   };
 }
+
+const DEFAULT_TREE_EXPANDED = new Set(["user-config", "projects"]);
 
 function schedulePersist(getState: () => Store) {
   if (saveTimer) clearTimeout(saveTimer);
@@ -120,6 +130,12 @@ export const useStore = create<Store>((set, get) => ({
   files: [],
   edges: [],
   setIndex: (files, edges) => set({ files, edges }),
+
+  treeExpanded: DEFAULT_TREE_EXPANDED,
+  setTreeExpanded: (ids) => {
+    set({ treeExpanded: ids });
+    schedulePersist(get);
+  },
 
   selectedId: null,
   // Selecting a node auto-opens the Inspector if it's currently closed —
@@ -194,7 +210,10 @@ export const useStore = create<Store>((set, get) => ({
     schedulePersist(get);
   },
 
-  hydrate: (s) =>
+  hydrate: (s) => {
+    const expanded = s.tree_expanded && s.tree_expanded.length > 0
+      ? new Set<string>(s.tree_expanded)
+      : DEFAULT_TREE_EXPANDED;
     set({
       pins: s.pins ?? {},
       lastCwd: s.last_cwd ?? null,
@@ -204,7 +223,9 @@ export const useStore = create<Store>((set, get) => ({
       inspectorOpen: s.inspector_open ?? false,
       simulatorMode: s.simulator_mode ?? "per-cwd",
       editorOpen: s.editor_open ?? false,
-    }),
+      treeExpanded: expanded,
+    });
+  },
 
   writeIntent: null,
   setWriteIntent: (i) => set({ writeIntent: i }),

@@ -115,6 +115,8 @@ export interface UiState {
   inspector_open?: boolean;
   simulator_mode?: SimulatorMode;
   editor_open?: boolean;
+  // Phase 4: explorer tree expanded folder ids. Empty = default open logic applied.
+  tree_expanded?: string[];
 }
 
 // --- Non-canonical endpoint -----------------------------------------------

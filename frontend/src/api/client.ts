@@ -295,6 +295,28 @@ export async function postTier2InstallPreview(): Promise<PreviewResponse> {
   return r.json();
 }
 
+// --- Phase 4: autoload toggle preview (POST /api/autoload-toggle-preview) ---
+
+export interface AutoloadTogglePreviewResponse extends PreviewResponse {
+  toggle_applicable: boolean;
+  new_enabled: boolean;
+  mechanism: string;
+  reason?: string;
+}
+
+export async function postAutoloadTogglePreview(
+  path: string,
+  enabled: boolean,
+): Promise<AutoloadTogglePreviewResponse> {
+  const r = await fetch("/api/autoload-toggle-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, enabled }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
 export async function postTier2UninstallPreview(): Promise<PreviewResponse> {
   const r = await fetch("/api/tier2-uninstall-preview", {
     method: "POST",

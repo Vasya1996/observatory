@@ -36,6 +36,8 @@ import {
   useState,
 } from "react";
 import { useStore } from "../state/store";
+import { useWritePipeline } from "../hooks/useWritePipeline";
+import { postAutoloadTogglePreview } from "../api/client";
 import { ICON_PATH_BY_KIND } from "./nodeIcons";
 import type { FileEntry, OrphanConfigEntry } from "../types";
 import {
@@ -46,29 +48,6 @@ import {
   type TreeNode,
 } from "./explorerTree";
 
-const STORAGE_KEY = "obs_tree_expanded";
-const DEFAULT_OPEN_GROUPS = new Set(["user-config", "projects"]);
-
-function loadExpanded(): Set<string> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return new Set<string>(arr as string[]);
-    }
-  } catch {
-    /* ignore */
-  }
-  return new Set<string>(DEFAULT_OPEN_GROUPS);
-}
-
-function saveExpanded(s: Set<string>) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...s]));
-  } catch {
-    /* ignore */
-  }
-}
 
 interface Props {
   files: FileEntry[];
@@ -85,7 +64,8 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   const selectedId = useStore((s) => s.selectedId);
   const select = useStore((s) => s.select);
   const setEditorOpen = useStore((s) => s.setEditorOpen);
-  const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
+  const expanded = useStore((s) => s.treeExpanded);
+  const setTreeExpanded = useStore((s) => s.setTreeExpanded);
   const [query, setQuery] = useState("");
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -100,13 +80,10 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   );
 
   function toggleExpand(id: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      saveExpanded(next);
-      return next;
-    });
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setTreeExpanded(next);
   }
 
   const lq = query.toLowerCase().trim();
@@ -133,23 +110,21 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   useEffect(() => {
     if (!selectedId) return;
     const anc = ancestorIds(groups, selectedId);
-    if (anc.length === 0) return;
-    setExpanded((prev) => {
-      const next = new Set(prev);
+    if (anc.length > 0) {
+      const next = new Set(expanded);
       let changed = false;
       for (const id of anc) {
         if (!next.has(id)) { next.add(id); changed = true; }
       }
-      if (changed) { saveExpanded(next); return next; }
-      return prev;
-    });
+      if (changed) setTreeExpanded(next);
+    }
     // Scroll into view after a brief delay to let expansion render.
     const t = setTimeout(() => {
       const el = rowRefs.current.get(selectedId);
       if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }, 80);
     return () => clearTimeout(t);
-  }, [selectedId, groups]);
+  }, [selectedId, groups, expanded, setTreeExpanded]);
 
   // Bidirectional: graph hover → highlight tree row.
   // GraphCanvas doesn't yet emit hovered-node events outside of cy.
@@ -507,11 +482,15 @@ function FileRow({
   const indent = 24 + depth * 14 + 14; // extra 14 for indent past folder chevron
   const iconPath = ICON_PATH_BY_KIND[node.kind] ?? null;
 
-  // Autoload toggle visual state — no write wired yet (backend contract pending).
-  // "applicable" kinds: claude_md, rule; others are not autoload-toggleable.
-  const autoloadApplicable = node.kind === "claude_md" || node.kind === "rule";
-  // Treat all files as on for now (read from file.paths_status when backend lands).
-  const autoloadOn = autoloadApplicable && node.file.paths_status !== "missing";
+  // Autoload toggle: rule and skill are the most common togglable kinds.
+  // Other kinds return toggle_applicable: false from the backend.
+  const autoloadApplicable = node.kind !== "automemory" &&
+    node.kind !== "plugin_registry" &&
+    node.kind !== "plugin_manifest" &&
+    node.kind !== "script";
+  // "on" means currently loaded (not sentinel-disabled). Use paths_status as proxy:
+  // missing = the paths glob points nowhere → treat as off.
+  const autoloadOn = node.file.paths_status !== "missing";
 
   return (
     <div
@@ -563,35 +542,56 @@ function FileRow({
       )}
 
       <AutoloadToggle
+        path={node.path}
         applicable={autoloadApplicable}
         on={autoloadOn}
-        disabled
+        writable={node.file.writable ?? true}
       />
     </div>
   );
 }
 
 interface AutoloadToggleProps {
+  path: string;
   applicable: boolean;
   on: boolean;
-  disabled: boolean;
+  writable: boolean;
 }
 
-function AutoloadToggle({ applicable, on, disabled }: AutoloadToggleProps) {
+function AutoloadToggle({ path, applicable, on, writable }: AutoloadToggleProps) {
+  const { confirmStagedPreview } = useWritePipeline();
+  const [loading, setLoading] = useState(false);
+
   if (!applicable) {
     return <span className="explorer-autoload na" aria-hidden title="Not applicable" />;
   }
+
+  async function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (loading || !writable) return;
+    setLoading(true);
+    try {
+      const preview = await postAutoloadTogglePreview(path, !on);
+      if (!preview.toggle_applicable) {
+        // Backend says not togglable for this file — render as n/a
+        return;
+      }
+      await confirmStagedPreview(path, preview);
+    } catch {
+      // Toast is pushed by confirmStagedPreview on failure; nothing extra needed.
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <button
-      className={`explorer-autoload${on ? " on" : ""}${disabled ? " pending" : ""}`}
-      title={disabled ? "Autoload toggle — backend contract pending" : on ? "Autoload: on" : "Autoload: off"}
+      className={`explorer-autoload${on ? " on" : ""}${loading ? " pending" : ""}`}
+      title={!writable ? "Read-only — cannot toggle" : on ? "Autoload: on — click to disable" : "Autoload: off — click to enable"}
       aria-label={on ? "Autoload on" : "Autoload off"}
       aria-pressed={on}
-      disabled={disabled}
-      onClick={(e) => {
-        e.stopPropagation();
-        // Write not wired yet — pending backend contract.
-      }}
+      disabled={loading || !writable}
+      onClick={handleClick}
       tabIndex={-1}
     />
   );
