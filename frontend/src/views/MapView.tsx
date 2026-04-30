@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type cytoscape from "cytoscape";
 import { CwdSelector } from "../components/CwdSelector";
+import { ExplorerPane } from "../components/ExplorerPane";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { IconOverlay } from "../components/IconOverlay";
 import { Inspector } from "../components/Inspector";
@@ -10,11 +11,11 @@ import { TokenBudgetBar } from "../components/TokenBudgetBar";
 import { EditorPanel } from "../components/EditorPanel";
 import { ContextMenu } from "../components/ContextMenu";
 import type { ContextMenuTarget } from "../components/ContextMenu";
-import { fetchCwds, fetchSimulate } from "../api/client";
+import { fetchCwds, fetchNonCanonical, fetchSimulate } from "../api/client";
 import { useStore } from "../state/store";
 import { applyInternalFilter } from "../state/visibility";
 import { buildTreePositions, type ZoneMap } from "../tree/buildTreePositions";
-import type { Edge, LoadStatus } from "../types";
+import type { Edge, LoadStatus, OrphanConfigEntry } from "../types";
 
 // Default canvas viewport size used by the tree builder when the actual
 // container has not laid out yet. Roughly matches the chrome-deducted
@@ -32,6 +33,11 @@ export function MapView() {
   const [cy, setCy] = useState<cytoscape.Core | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<Edge | null>(null);
   const [statusMap, setStatusMap] = useState<Map<string, LoadStatus> | null>(null);
+  const [orphanConfigs, setOrphanConfigs] = useState<OrphanConfigEntry[]>([]);
+
+  // Ref to the ExplorerPane DOM — used to apply .graph-hovered to rows
+  // when the graph emits obs:graph-hover-node events.
+  const explorerRef = useRef<HTMLElement | null>(null);
 
   const treeMode = mapMode === "tree";
   const inspectorOpen = useStore((s) => s.inspectorOpen);
@@ -110,6 +116,23 @@ export function MapView() {
     };
   }, [lastCwd, files]);
 
+  // Fetch orphan_configs for the explorer pane orphan indicator.
+  // These don't depend on cwd (same for every cwd query), so we
+  // fetch once with lastCwd and update on cwd change.
+  useEffect(() => {
+    if (!lastCwd) return;
+    let cancelled = false;
+    fetchNonCanonical(lastCwd)
+      .then((res) => {
+        if (cancelled) return;
+        setOrphanConfigs(res.orphan_configs ?? []);
+      })
+      .catch(() => {
+        /* non-canonical is best-effort for the explorer pane */
+      });
+    return () => { cancelled = true; };
+  }, [lastCwd]);
+
   // Tree-mode positions.
   const layout = useMemo(() => {
     if (!treeMode) return null;
@@ -127,6 +150,49 @@ export function MapView() {
   const handleDblClick = useCallback((path: string) => {
     setEditorOpen(path, true);
   }, [setEditorOpen]);
+
+  // Explorer row hover → dim graph nodes except the hovered one and its neighbours.
+  // Uses the same `.dim` class as GraphCanvas's internal hover (locked rule #32).
+  const handleRowHover = useCallback((fileId: string | null) => {
+    if (!cy) return;
+    if (!fileId) {
+      cy.elements().removeClass("dim");
+      return;
+    }
+    const n = cy.getElementById(fileId);
+    if (!n.length) return;
+    const related = n.connectedEdges().connectedNodes().union(n);
+    cy.elements().difference(related.union(n.connectedEdges())).addClass("dim");
+    related.removeClass("dim");
+    n.connectedEdges().removeClass("dim");
+  }, [cy]);
+
+  // Graph canvas emits a custom DOM event when its internal hover changes —
+  // we listen and apply the `.graph-hovered` class to the matching explorer row.
+  useEffect(() => {
+    const pane = explorerRef.current;
+    if (!pane) return;
+
+    function onGraphHoverNode(e: Event) {
+      const id = (e as CustomEvent<string | null>).detail;
+      // Clear previous.
+      pane!.querySelectorAll(".explorer-row.graph-hovered").forEach((el) => {
+        el.classList.remove("graph-hovered");
+      });
+      if (id) {
+        const row = pane!.querySelector(`[data-file-id="${id}"]`);
+        if (row) {
+          row.classList.add("graph-hovered");
+          row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+      }
+    }
+
+    document.addEventListener("obs:graph-hover-node", onGraphHoverNode);
+    return () => {
+      document.removeEventListener("obs:graph-hover-node", onGraphHoverNode);
+    };
+  }, []);
 
   // Right-click on graph canvas: find the node under the pointer and show context menu.
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -169,13 +235,23 @@ export function MapView() {
 
   return (
     <div className={`view-shell${inspectorOpen ? " has-inspector" : ""}${editorOpen ? " has-editor" : ""}`}>
-      {/* EditorPanel slides in from the left. Canvas area shrinks via
-          .view-shell.has-editor .map-canvas-area CSS rule. */}
-      <EditorPanel files={visibleFiles} />
+      {/* Phase 4: Explorer pane — 320px fixed left column, always visible. */}
+      <ExplorerPane
+        files={visibleFiles}
+        orphanConfigs={orphanConfigs}
+        cy={cy}
+        onRowHover={handleRowHover}
+        ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
+      />
+
+      {/* Canvas area (grid-column 2). EditorPanel slides in from left within
+          this column. Inspector overlays from the right. */}
       <div
         className="map-canvas-area"
         onContextMenu={handleContextMenu}
       >
+        {/* EditorPanel slides in from the left edge of the canvas area. */}
+        <EditorPanel files={visibleFiles} />
         <GraphCanvas
           files={visibleFiles}
           edges={visibleEdges}

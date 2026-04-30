@@ -392,24 +392,13 @@ body {
   color: var(--amber);
 }
 
-/* ---------- view shell ---------- */
-.view-shell {
+/* ---------- view shell (Phase 3 original — superseded by Phase 4 grid below) ----------
+   The grid-based .view-shell rule now lives at the bottom of this file under
+   the "Phase 4 — Explorer pane" section. These stubs remain as structural
+   anchors for the placeholder + non-Map views that don't use the explorer. */
+.view-shell-placeholder {
   min-height: calc(100vh - 64px);
   position: relative;
-}
-
-/* When the Inspector pane is mounted and open, the canvas-area sibling
-   shrinks to leave a 360px column on the right. The Inspector itself keeps
-   `right: 0`. Width transitions in lockstep with the pane (200ms) so the
-   canvas doesn't snap shut while the pane is still sliding in. */
-.map-canvas-area {
-  position: relative;
-  width: 100%;
-  height: calc(100vh - 64px);
-  transition: width 200ms ease-out;
-}
-.view-shell.has-inspector .map-canvas-area {
-  width: calc(100% - 360px);
 }
 
 /* placeholder hero used by views not yet implemented (Sim/Editor/Ext) */
@@ -2812,12 +2801,7 @@ body {
   cursor: default;
 }
 
-/* When the Editor pane is open, shrink the canvas area from the left. */
-.view-shell.has-editor .map-canvas-area {
-  margin-left: 480px;
-  width: calc(100% - 480px);
-  transition: margin-left 200ms ease-out, width 200ms ease-out;
-}
+/* Editor + canvas rules now live in Phase 4 section at bottom of file. */
 
 /* ---------- Context menu + confirm dialog ---------- */
 
@@ -3798,4 +3782,354 @@ body {
   font-size: 9.5px;
   color: var(--paper-faint);
   line-height: 1.4;
+}
+
+/* ==========================================================================
+   Phase 4 — Explorer pane (320px left column, always visible in Map view)
+   Anchored to /home/voxdecaelo/claude-dashboard-design/index.html (.explorer
+   and .node rules, lines 119-204).
+   ========================================================================== */
+
+/* The view-shell now holds three columns: Explorer | Canvas | (Inspector).
+   Explorer is a grid column peer; canvas shrinks left by 320px always. */
+.view-shell {
+  display: grid;
+  /* explorer | canvas (flex) | inspector sits absolute right */
+  grid-template-columns: 320px 1fr;
+  grid-template-rows: 1fr;
+  min-height: calc(100vh - 64px);
+  position: relative;
+}
+
+.explorer-pane {
+  grid-column: 1;
+  grid-row: 1;
+  width: 320px;
+  height: calc(100vh - 64px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-right: 1px solid var(--line);
+  background: rgba(17, 17, 22, 0.6);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 64px;      /* below the chrome */
+  align-self: start;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  flex-shrink: 0;
+}
+.explorer-pane::-webkit-scrollbar { width: 6px; }
+.explorer-pane::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+
+/* Canvas area occupies the right grid column; Inspector overlays it
+   from the right via its existing absolute positioning. */
+.map-canvas-area {
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 64px);
+}
+
+/* When Inspector is open, shrink canvas from right (existing rule,
+   now scoped to grid-column 2 which is already right of Explorer). */
+.view-shell.has-inspector .map-canvas-area {
+  width: calc(100% - 360px);
+}
+
+/* When EditorPanel is open, shift canvas content left within its column. */
+.view-shell.has-editor .map-canvas-area {
+  margin-left: 480px;
+  width: calc(100% - 480px);
+  transition: margin-left 200ms ease-out, width 200ms ease-out;
+}
+
+/* Both Inspector and EditorPanel open — canvas gets very narrow at 1440px.
+   At 1440px: 320(explorer) + 480(editor) + canvas + 360(inspector) = 1440
+   → canvas = 1440-320-480-360 = 280px. Acceptable at design viewport. */
+.view-shell.has-inspector.has-editor .map-canvas-area {
+  width: calc(100% - 480px - 360px);
+}
+
+/* ---------- explorer header ---------- */
+.explorer-pane-header {
+  padding: 24px 0 0 0;
+  flex-shrink: 0;
+}
+
+.explorer-pane-title {
+  margin: 0 24px 18px 24px;
+  font-family: "Instrument Serif", serif;
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--paper);
+}
+.explorer-pane-title em {
+  font-style: italic;
+  color: var(--amber);
+}
+
+/* ---------- search bar (matches mockup .filterbar) ---------- */
+.explorer-search {
+  margin: 0 24px 22px 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-faint);
+  transition: border-color 140ms ease;
+}
+.explorer-search:focus-within {
+  border-color: var(--paper-faint);
+}
+.explorer-search svg {
+  flex-shrink: 0;
+  color: var(--paper-faint);
+}
+.explorer-search input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--paper);
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 0;
+}
+.explorer-search input::placeholder {
+  color: var(--paper-faint);
+}
+.explorer-search-clear {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--paper-faint);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 100ms ease;
+}
+.explorer-search-clear:hover { color: var(--paper); }
+.explorer-search-hint {
+  color: var(--paper-faint);
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+/* ---------- body scroll area ---------- */
+.explorer-pane-body {
+  flex: 1 1 auto;
+  padding: 2px 0 80px 0;
+  min-height: 0;
+}
+
+.explorer-empty {
+  padding: 24px 24px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-faint);
+}
+
+/* ---------- group (top-level sections: User config / Projects / etc.) ---------- */
+.explorer-group {
+  margin-bottom: 4px;
+}
+
+.explorer-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 24px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--paper-dim);
+  text-align: left;
+  transition: color 100ms ease;
+}
+.explorer-group-head:hover { color: var(--paper); }
+
+.explorer-group-chev {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  width: 10px;
+  color: var(--paper-faint);
+}
+.explorer-group-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: inherit;
+}
+.explorer-group-count {
+  margin-left: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+}
+
+.explorer-group-body {
+  padding: 2px 0 8px 0;
+}
+
+/* ---------- folder rows ---------- */
+.explorer-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 5px 24px;
+  color: var(--paper-dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  text-align: left;
+  transition: color 100ms ease, background 100ms ease;
+}
+.explorer-folder-row:hover {
+  color: var(--paper);
+  background: rgba(232, 228, 216, 0.025);
+}
+.explorer-row-chev {
+  font-size: 9px;
+  color: var(--paper-faint);
+  flex-shrink: 0;
+  width: 9px;
+}
+.explorer-folder-icon {
+  display: flex;
+  align-items: center;
+  color: var(--paper-faint);
+  flex-shrink: 0;
+}
+.explorer-folder-label {
+  color: inherit;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- file rows (matches mockup .node) ---------- */
+.explorer-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding-right: 14px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 120ms ease, border-color 120ms ease;
+  outline: none;
+}
+.explorer-row:hover {
+  background: rgba(232, 228, 216, 0.03);
+}
+.explorer-row.selected {
+  background: rgba(240, 168, 58, 0.06);
+  border-left-color: var(--amber);
+}
+/* Bidirectional: graph node hover → amber tint on matching tree row.
+   Class applied by MapView via a custom event or direct DOM manipulation. */
+.explorer-row.graph-hovered {
+  background: rgba(240, 168, 58, 0.04);
+}
+.explorer-row:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: -1px;
+}
+
+.explorer-row-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--paper-faint);
+  flex-shrink: 0;
+}
+.explorer-row.selected .explorer-row-icon { color: var(--amber); }
+
+.explorer-row-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.explorer-row.selected .explorer-row-name { color: var(--amber); }
+
+/* Orphan indicator — small static glyph, NOT a toggle (locked spec) */
+.explorer-orphan-glyph {
+  font-size: 10px;
+  color: var(--amber);
+  flex-shrink: 0;
+  opacity: 0.8;
+  cursor: default;
+}
+
+/* ---------- autoload toggle (matches mockup .auto pill switch) ---------- */
+.explorer-autoload {
+  width: 26px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 160ms ease, border-color 160ms ease;
+  cursor: not-allowed;   /* disabled until backend contract lands */
+  appearance: none;
+  padding: 0;
+}
+.explorer-autoload::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--paper-faint);
+  transition: left 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.explorer-autoload.on {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+.explorer-autoload.on::after {
+  left: 13px;
+  background: var(--ink);
+}
+/* "not applicable" state — no knob, just a faint placeholder */
+.explorer-autoload.na {
+  width: 26px;
+  height: 14px;
+  display: block;
+  flex-shrink: 0;
+}
+/* pending state — dashed border indicates "wired but not yet active" */
+.explorer-autoload.pending {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

@@ -19,6 +19,9 @@ interface Props {
   edges: Edge[];
   onReady?: (cy: cytoscape.Core | null) => void;
   onHoverEdge?: (edge: Edge | null) => void;
+  // Hover on a file node: called with the FileEntry id (or null on leave).
+  // Used by ExplorerPane for bidirectional graph→tree row highlight.
+  onHoverNode?: (id: string | null) => void;
   // Double-click/double-tap on a node: called with the FileEntry path so the
   // parent can open the EditorPanel. Folder umbrella nodes are skipped.
   onDblClick?: (path: string) => void;
@@ -119,6 +122,7 @@ export function GraphCanvas({
   edges,
   onReady,
   onHoverEdge,
+  onHoverNode,
   onDblClick,
   statusMap,
   positions,
@@ -140,6 +144,9 @@ export function GraphCanvas({
   // re-renders without forcing the whole graph to rebuild.
   const onHoverEdgeRef = useRef(onHoverEdge);
   onHoverEdgeRef.current = onHoverEdge;
+
+  const onHoverNodeRef = useRef(onHoverNode);
+  onHoverNodeRef.current = onHoverNode;
 
   // Latest onDblClick in a ref — same pattern as onHoverEdge.
   const onDblClickRef = useRef(onDblClick);
@@ -670,6 +677,10 @@ export function GraphCanvas({
       cy.elements().difference(related.union(inc)).addClass("dim");
       out.addClass("hover-out");
       into.addClass("hover-in");
+
+      // Notify ExplorerPane for bidirectional graph→tree row highlight.
+      onHoverNodeRef.current?.(id);
+      document.dispatchEvent(new CustomEvent("obs:graph-hover-node", { detail: id }));
     });
     cy.on("mouseout", "node", (e) => {
       cy.elements().removeClass("dim hover-out hover-in");
@@ -684,6 +695,10 @@ export function GraphCanvas({
       } else if (childFolderIndex.get(id) === openFolderId && openFolderId) {
         collapseFolder(false);
       }
+
+      // Clear bidirectional highlight.
+      onHoverNodeRef.current?.(null);
+      document.dispatchEvent(new CustomEvent("obs:graph-hover-node", { detail: null }));
     });
 
     // ----- drag to pin (locked design #15) -----
