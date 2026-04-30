@@ -14,7 +14,7 @@ import type { ContextMenuTarget } from "../components/ContextMenu";
 import { fetchCwds, fetchNonCanonical, fetchSimulate } from "../api/client";
 import { useStore, EXPLORER_WIDTH_MIN, EXPLORER_WIDTH_MAX } from "../state/store";
 import { applyInternalFilter } from "../state/visibility";
-import type { Edge, LoadStatus, OrphanConfigEntry } from "../types";
+import type { Edge, FileEntry, LoadStatus, OrphanConfigEntry } from "../types";
 
 export function MapView() {
   const files = useStore((s) => s.files);
@@ -178,6 +178,19 @@ export function MapView() {
     };
   }, []);
 
+  // Right-click on an explorer tree row.
+  const handleExplorerContextMenu = useCallback((e: React.MouseEvent, file: FileEntry) => {
+    e.preventDefault();
+    const displayName = file.display_name ?? file.path.split("/").pop() ?? file.path;
+    setCtxTarget({
+      path: file.path,
+      displayName,
+      writable: file.writable ?? true,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  }, []);
+
   // Right-click on graph canvas: find the node under the pointer and show context menu.
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!cy) return;
@@ -228,6 +241,7 @@ export function MapView() {
           files={visibleFiles}
           orphanConfigs={orphanConfigs}
           onRowHover={handleRowHover}
+          onRowContextMenu={handleExplorerContextMenu}
           ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
         />
       </ErrorBoundary>

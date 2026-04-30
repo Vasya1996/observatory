@@ -53,12 +53,15 @@ interface Props {
   orphanConfigs: OrphanConfigEntry[];
   /** Row hover → tell parent to highlight the graph node + dim others. */
   onRowHover: (fileId: string | null) => void;
+  /** Right-click on a tree row → parent builds ContextMenuTarget from this. */
+  onRowContextMenu?: (e: React.MouseEvent, file: FileEntry) => void;
 }
 
 export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane({
   files,
   orphanConfigs,
   onRowHover,
+  onRowContextMenu,
 }, ref) {
   const selectedId = useStore((s) => s.selectedId);
   const select = useStore((s) => s.select);
@@ -147,6 +150,10 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     onRowHover(null);
   }
 
+  function handleRowContextMenu(e: React.MouseEvent, file: FileEntry) {
+    if (onRowContextMenu) onRowContextMenu(e, file);
+  }
+
   function registerRef(id: string) {
     return (el: HTMLDivElement | null) => {
       if (el) rowRefs.current.set(id, el);
@@ -212,6 +219,7 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
             onRowDblClick={handleRowDblClick}
             onRowMouseEnter={handleRowMouseEnter}
             onRowMouseLeave={handleRowMouseLeave}
+            onRowContextMenu={handleRowContextMenu}
             orphanIds={orphanIds}
             registerRef={registerRef}
           />
@@ -237,6 +245,7 @@ interface GroupRowProps {
   onRowDblClick: (f: FileEntry) => void;
   onRowMouseEnter: (id: string) => void;
   onRowMouseLeave: () => void;
+  onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
 }
@@ -253,6 +262,7 @@ function GroupRow({
   onRowDblClick,
   onRowMouseEnter,
   onRowMouseLeave,
+  onRowContextMenu,
   orphanIds,
   registerRef,
 }: GroupRowProps) {
@@ -286,6 +296,7 @@ function GroupRow({
             onRowDblClick={onRowDblClick}
             onRowMouseEnter={onRowMouseEnter}
             onRowMouseLeave={onRowMouseLeave}
+            onRowContextMenu={onRowContextMenu}
             orphanIds={orphanIds}
             registerRef={registerRef}
           />
@@ -308,6 +319,7 @@ interface ItemListProps {
   onRowDblClick: (f: FileEntry) => void;
   onRowMouseEnter: (id: string) => void;
   onRowMouseLeave: () => void;
+  onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
 }
@@ -326,6 +338,7 @@ function ItemList(props: ItemListProps) {
     onRowDblClick,
     onRowMouseEnter,
     onRowMouseLeave,
+    onRowContextMenu,
     orphanIds,
     registerRef,
   } = props;
@@ -347,6 +360,7 @@ function ItemList(props: ItemListProps) {
               onRowDblClick={onRowDblClick}
               onRowMouseEnter={onRowMouseEnter}
               onRowMouseLeave={onRowMouseLeave}
+              onRowContextMenu={onRowContextMenu}
               registerRef={registerRef}
             />
           );
@@ -370,6 +384,7 @@ function ItemList(props: ItemListProps) {
               onRowDblClick={onRowDblClick}
               onRowMouseEnter={onRowMouseEnter}
               onRowMouseLeave={onRowMouseLeave}
+              onRowContextMenu={onRowContextMenu}
               orphanIds={orphanIds}
               registerRef={registerRef}
             />
@@ -394,6 +409,7 @@ interface FolderRowProps {
   onRowDblClick: (f: FileEntry) => void;
   onRowMouseEnter: (id: string) => void;
   onRowMouseLeave: () => void;
+  onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
 }
@@ -412,6 +428,7 @@ function FolderRow({
   onRowDblClick,
   onRowMouseEnter,
   onRowMouseLeave,
+  onRowContextMenu,
   orphanIds,
   registerRef,
 }: FolderRowProps) {
@@ -447,6 +464,7 @@ function FolderRow({
           onRowDblClick={onRowDblClick}
           onRowMouseEnter={onRowMouseEnter}
           onRowMouseLeave={onRowMouseLeave}
+          onRowContextMenu={onRowContextMenu}
           orphanIds={orphanIds}
           registerRef={registerRef}
         />
@@ -464,6 +482,7 @@ interface FileRowProps {
   onRowDblClick: (f: FileEntry) => void;
   onRowMouseEnter: (id: string) => void;
   onRowMouseLeave: () => void;
+  onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
 }
 
@@ -476,6 +495,7 @@ function FileRow({
   onRowDblClick,
   onRowMouseEnter,
   onRowMouseLeave,
+  onRowContextMenu,
   registerRef,
 }: FileRowProps) {
   const indent = 24 + depth * 14 + 14; // extra 14 for indent past folder chevron
@@ -502,6 +522,7 @@ function FileRow({
       onDoubleClick={() => onRowDblClick(node.file)}
       onMouseEnter={() => onRowMouseEnter(node.id)}
       onMouseLeave={onRowMouseLeave}
+      onContextMenu={(e) => onRowContextMenu(e, node.file)}
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Enter") onRowClick(node.file);
