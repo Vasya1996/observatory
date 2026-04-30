@@ -40,6 +40,10 @@ export interface Toast {
   ttl?: number;
 }
 
+export const EXPLORER_WIDTH_DEFAULT = 320;
+export const EXPLORER_WIDTH_MIN = 240;
+export const EXPLORER_WIDTH_MAX = 480;
+
 interface Store {
   files: FileEntry[];
   edges: Edge[];
@@ -51,6 +55,12 @@ interface Store {
   // falls back to DEFAULT_OPEN_GROUPS (user-config + projects) when empty.
   treeExpanded: Set<string>;
   setTreeExpanded: (ids: Set<string>) => void;
+
+  // Phase 4 — explorer column width in px (resize divider). Persisted via
+  // /api/state (tree_width). Backend agent adds the field; absent payloads
+  // fall back to EXPLORER_WIDTH_DEFAULT. Clamped to [240, 480].
+  explorerWidth: number;
+  setExplorerWidth: (w: number) => void;
 
   // Currently-inspected file id. Decoupled from `inspectorOpen`: clicking ×
   // hides the pane but keeps the last selection so re-opening restores
@@ -112,6 +122,7 @@ function snapshot(s: Store): UiState {
     simulator_mode: s.simulatorMode,
     editor_open: s.editorOpen,
     tree_expanded: [...s.treeExpanded],
+    tree_width: s.explorerWidth,
   };
 }
 
@@ -134,6 +145,13 @@ export const useStore = create<Store>((set, get) => ({
   treeExpanded: DEFAULT_TREE_EXPANDED,
   setTreeExpanded: (ids) => {
     set({ treeExpanded: ids });
+    schedulePersist(get);
+  },
+
+  explorerWidth: EXPLORER_WIDTH_DEFAULT,
+  setExplorerWidth: (w) => {
+    const clamped = Math.max(EXPLORER_WIDTH_MIN, Math.min(EXPLORER_WIDTH_MAX, w));
+    set({ explorerWidth: clamped });
     schedulePersist(get);
   },
 
@@ -214,6 +232,8 @@ export const useStore = create<Store>((set, get) => ({
     const expanded = s.tree_expanded && s.tree_expanded.length > 0
       ? new Set<string>(s.tree_expanded)
       : DEFAULT_TREE_EXPANDED;
+    const rawWidth = s.tree_width ?? EXPLORER_WIDTH_DEFAULT;
+    const explorerWidth = Math.max(EXPLORER_WIDTH_MIN, Math.min(EXPLORER_WIDTH_MAX, rawWidth));
     set({
       pins: s.pins ?? {},
       lastCwd: s.last_cwd ?? null,
@@ -224,6 +244,7 @@ export const useStore = create<Store>((set, get) => ({
       simulatorMode: s.simulator_mode ?? "per-cwd",
       editorOpen: s.editor_open ?? false,
       treeExpanded: expanded,
+      explorerWidth,
     });
   },
 

@@ -117,6 +117,9 @@ export interface UiState {
   editor_open?: boolean;
   // Phase 4: explorer tree expanded folder ids. Empty = default open logic applied.
   tree_expanded?: string[];
+  // Phase 4: explorer column width in px. Default 320; range 240–480.
+  // Backend agent adds this field; absent in older .state.json payloads → fallback 320.
+  tree_width?: number;
 }
 
 // --- Non-canonical endpoint -----------------------------------------------

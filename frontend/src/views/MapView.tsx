@@ -12,7 +12,7 @@ import { EditorPanel } from "../components/EditorPanel";
 import { ContextMenu } from "../components/ContextMenu";
 import type { ContextMenuTarget } from "../components/ContextMenu";
 import { fetchCwds, fetchNonCanonical, fetchSimulate } from "../api/client";
-import { useStore } from "../state/store";
+import { useStore, EXPLORER_WIDTH_MIN, EXPLORER_WIDTH_MAX } from "../state/store";
 import { applyInternalFilter } from "../state/visibility";
 import { buildTreePositions, type ZoneMap } from "../tree/buildTreePositions";
 import type { Edge, LoadStatus, OrphanConfigEntry } from "../types";
@@ -30,6 +30,8 @@ export function MapView() {
   const lastCwd = useStore((s) => s.lastCwd);
   const setLastCwd = useStore((s) => s.setLastCwd);
   const mapMode = useStore((s) => s.mapMode);
+  const explorerWidth = useStore((s) => s.explorerWidth);
+  const setExplorerWidth = useStore((s) => s.setExplorerWidth);
   const [cy, setCy] = useState<cytoscape.Core | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<Edge | null>(null);
   const [statusMap, setStatusMap] = useState<Map<string, LoadStatus> | null>(null);
@@ -68,6 +70,15 @@ export function MapView() {
     }, 220);
     return () => clearTimeout(t);
   }, [cy, inspectorOpen, editorOpen]);
+
+  // When the explorer resize divider is dragged, the canvas column grows/shrinks.
+  // Call cy.resize() so Cytoscape's internal viewport matches the new element
+  // size. No cy.fit() — the user is mid-drag; re-centering would move pinned
+  // nodes from where the eye is tracking. Pin model coordinates are unaffected.
+  useEffect(() => {
+    if (!cy) return;
+    cy.resize();
+  }, [cy, explorerWidth]);
 
   // Auto-pick the first available cwd when none is set. Tree mode otherwise
   // renders an empty user-zone placeholder until the user opens the picker;
@@ -234,13 +245,23 @@ export function MapView() {
   }, [cy, files]);
 
   return (
-    <div className={`view-shell${inspectorOpen ? " has-inspector" : ""}${editorOpen ? " has-editor" : ""}`}>
-      {/* Phase 4: Explorer pane — 320px fixed left column, always visible. */}
+    <div
+      className={`view-shell${inspectorOpen ? " has-inspector" : ""}${editorOpen ? " has-editor" : ""}`}
+      style={{ "--explorer-w": `${explorerWidth}px` } as React.CSSProperties}
+    >
+      {/* Phase 4: Explorer pane — width driven by --explorer-w CSS var. */}
       <ExplorerPane
         files={visibleFiles}
         orphanConfigs={orphanConfigs}
         onRowHover={handleRowHover}
         ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
+      />
+
+      {/* Resize divider between Explorer and canvas.
+          Positioned at the right edge of the explorer column via `left`. */}
+      <ResizeDivider
+        explorerWidth={explorerWidth}
+        onResize={setExplorerWidth}
       />
 
       {/* Canvas area (grid-column 2). EditorPanel slides in from left within
@@ -273,6 +294,77 @@ export function MapView() {
       <Inspector cy={cy} statusMap={statusMap} />
       <ContextMenu target={ctxTarget} onClose={() => setCtxTarget(null)} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ResizeDivider
+//
+// Draggable vertical hairline between the Explorer pane and the canvas.
+// Keyboard: ArrowLeft/ArrowRight move by 10px per press.
+// ---------------------------------------------------------------------------
+
+interface ResizeDividerProps {
+  explorerWidth: number;
+  onResize: (w: number) => void;
+}
+
+function ResizeDivider({ explorerWidth, onResize }: ResizeDividerProps) {
+  const [dragging, setDragging] = useState(false);
+  const startRef = useRef<{ mouseX: number; startWidth: number } | null>(null);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    startRef.current = { mouseX: e.clientX, startWidth: explorerWidth };
+  }, [explorerWidth]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    // Suppress text selection during drag so the cursor doesn't cause
+    // content to get selected while the mouse is down.
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    function onMove(e: MouseEvent) {
+      if (!startRef.current) return;
+      const delta = e.clientX - startRef.current.mouseX;
+      onResize(startRef.current.startWidth + delta);
+    }
+    function onUp() {
+      setDragging(false);
+      startRef.current = null;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+  }, [dragging, onResize]);
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowLeft") { e.preventDefault(); onResize(explorerWidth - 10); }
+    if (e.key === "ArrowRight") { e.preventDefault(); onResize(explorerWidth + 10); }
+  }
+
+  return (
+    <div
+      className={`explorer-resize-divider${dragging ? " dragging" : ""}`}
+      style={{ left: explorerWidth - 2 }}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize explorer column"
+      aria-valuenow={explorerWidth}
+      aria-valuemin={EXPLORER_WIDTH_MIN}
+      aria-valuemax={EXPLORER_WIDTH_MAX}
+      tabIndex={0}
+      onMouseDown={handleMouseDown}
+      onKeyDown={handleKeyDown}
+    />
   );
 }
 
