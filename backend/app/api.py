@@ -16,6 +16,8 @@ from sse_starlette.sse import EventSourceResponse
 from . import canonical, config, paths_proposals, scanner, tier2, writer
 from .markdown_merge import plan_merge
 from .models import (
+    AutoloadTogglePreviewResponse,
+    AutoloadToggleRequest,
     CommittedFile,
     CwdEntry,
     DeleteConfirmRequest,
@@ -1376,6 +1378,367 @@ def get_tier2_compare(req: Request, cwd: str = Query(...), session_id: Optional[
         "hook_events_found": len(cwd_events),
         "results": results,
     }
+
+
+# Sentinel glob used to "disable" an always-loaded rule by making its paths:
+# field point to a pattern that can never match any real file.
+_DISABLED_SENTINEL = ".DISABLED"
+
+# Comment prefix injected into CLAUDE.md @-import lines and MEMORY.md index
+# entries when toggling a knowledge file's autoload off.
+_DISABLED_COMMENT_PREFIX = "# [disabled by Observatory] "
+
+
+def _autoload_toggle_rule(
+    target: Path, current: str, enabled: bool
+) -> tuple[str, str]:
+    """Compute new content for a rule file toggle and the mechanism used.
+
+    Returns (new_content, mechanism).
+    """
+    fm, body = _split_frontmatter(current)
+
+    if enabled:
+        # Re-enable: restore original globs from paths_disabled if present,
+        # otherwise remove the sentinel (fall back to always-loaded).
+        original = fm.pop("paths_disabled", None)
+        fm.pop("paths", None)
+        if original:
+            fm["paths"] = original
+    else:
+        # Disable: if paths: exists, save it under paths_disabled, then
+        # replace with the sentinel so the rule never matches.
+        existing = fm.get("paths")
+        if existing and existing != [_DISABLED_SENTINEL]:
+            fm["paths_disabled"] = existing
+        fm["paths"] = [_DISABLED_SENTINEL]
+
+    if not fm:
+        new_content = body.lstrip("\n")
+    else:
+        new_content = _emit_frontmatter(fm, body)
+    return new_content, "paths_sentinel"
+
+
+def _autoload_toggle_skill(
+    target: Path, current_settings: str, enabled: bool, skill_literal: str
+) -> tuple[str, str]:
+    """Patch settings.json permissions.deny for a skill toggle.
+
+    Returns (new_settings_content, mechanism).
+    """
+    try:
+        data = json.loads(current_settings)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"settings.json parse error: {exc}")
+    deny: list = data.get("permissions", {}).get("deny", [])
+    if enabled:
+        deny = [d for d in deny if d != skill_literal]
+    else:
+        if skill_literal not in deny:
+            deny.append(skill_literal)
+    if deny:
+        data.setdefault("permissions", {})["deny"] = deny
+    else:
+        perm = data.get("permissions", {})
+        perm.pop("deny", None)
+        if perm:
+            data["permissions"] = perm
+        else:
+            data.pop("permissions", None)
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n", "permissions_deny"
+
+
+def _autoload_toggle_mcp(
+    mcp_content: str, server_name: str, enabled: bool
+) -> tuple[str, str]:
+    """Move an MCP server entry between mcpServers and mcpServers_disabled.
+
+    Returns (new_mcp_content, mechanism).
+    """
+    try:
+        data = json.loads(mcp_content)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f".mcp.json parse error: {exc}")
+    active: dict = data.get("mcpServers") or {}
+    disabled: dict = data.get("mcpServers_disabled") or {}
+    if enabled:
+        # Move from disabled back to active.
+        entry = disabled.pop(server_name, None)
+        if entry is None:
+            raise HTTPException(status_code=400, detail=f"MCP server '{server_name}' not found in mcpServers_disabled")
+        active[server_name] = entry
+    else:
+        entry = active.pop(server_name, None)
+        if entry is None:
+            raise HTTPException(status_code=400, detail=f"MCP server '{server_name}' not found in mcpServers")
+        disabled[server_name] = entry
+    data["mcpServers"] = active
+    if disabled:
+        data["mcpServers_disabled"] = disabled
+    else:
+        data.pop("mcpServers_disabled", None)
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n", "mcp_disabled_key"
+
+
+def _autoload_toggle_knowledge_memory_index(
+    memory_index_path: Path, target_path: Path, enabled: bool
+) -> tuple[str | None, str]:
+    """Comment or uncomment the line in MEMORY.md that references target_path.
+
+    Returns (new_content_or_None_if_no_change, mechanism). None means no
+    reference to target_path was found in MEMORY.md.
+    """
+    if not memory_index_path.is_file():
+        return None, "memory_index_comment"
+    content = memory_index_path.read_text(encoding="utf-8")
+    target_display = config.collapse_home(target_path)
+    target_basename = target_path.name
+
+    lines = content.splitlines(keepends=True)
+    new_lines = []
+    changed = False
+    for line in lines:
+        stripped = line.rstrip("\n")
+        if enabled:
+            # Remove the disabled prefix if present on a line mentioning the file.
+            if stripped.startswith(_DISABLED_COMMENT_PREFIX) and (
+                target_display in stripped or target_basename in stripped
+            ):
+                new_lines.append(stripped[len(_DISABLED_COMMENT_PREFIX):] + "\n")
+                changed = True
+                continue
+        else:
+            # Add the disabled prefix to a non-comment line mentioning the file.
+            if not stripped.startswith("#") and (
+                target_display in stripped or target_basename in stripped
+            ):
+                new_lines.append(_DISABLED_COMMENT_PREFIX + stripped + "\n")
+                changed = True
+                continue
+        new_lines.append(line)
+    if not changed:
+        return None, "memory_index_comment"
+    return "".join(new_lines), "memory_index_comment"
+
+
+def _find_at_import_parent(
+    files: list, target_path: Path
+) -> tuple[Path | None, int | None, str | None]:
+    """Find the file that @-imports target_path and the line number.
+
+    Returns (parent_path, line_number, raw_line) or (None, None, None).
+    """
+    target_display = config.collapse_home(target_path)
+    target_abs = str(target_path)
+    import_patterns = [
+        f"@{target_display}",
+        f"@{target_abs}",
+    ]
+    for f in files:
+        if f.kind not in ("claude_md", "rule"):
+            continue
+        try:
+            text = Path(f.path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            for pat in import_patterns:
+                if stripped == pat or stripped.startswith(pat + " "):
+                    return Path(f.path), i, line
+    return None, None, None
+
+
+def _autoload_toggle_knowledge_import(
+    parent_path: Path, current_parent: str, target_path: Path,
+    line_number: int, raw_line: str, enabled: bool
+) -> tuple[str, str]:
+    """Comment or uncomment the @-import line in the parent CLAUDE.md.
+
+    Returns (new_parent_content, mechanism).
+    """
+    lines = current_parent.splitlines(keepends=True)
+    idx = line_number - 1
+    if idx < 0 or idx >= len(lines):
+        raise HTTPException(status_code=500, detail="import line index out of range")
+    stripped_line = lines[idx].rstrip("\n")
+    if enabled:
+        if stripped_line.startswith(_DISABLED_COMMENT_PREFIX):
+            lines[idx] = stripped_line[len(_DISABLED_COMMENT_PREFIX):] + "\n"
+        else:
+            lines[idx] = stripped_line + "\n"
+    else:
+        if not stripped_line.startswith("#"):
+            lines[idx] = _DISABLED_COMMENT_PREFIX + stripped_line + "\n"
+    return "".join(lines), "comment_out_import"
+
+
+@router.post("/autoload-toggle-preview", response_model=AutoloadTogglePreviewResponse)
+def post_autoload_toggle_preview(
+    req: Request, body: AutoloadToggleRequest
+) -> AutoloadTogglePreviewResponse:
+    """Preview toggling autoload on/off for a file.
+
+    Returns a DiffModal-ready token when the toggle is applicable, or a
+    non-interactive indicator payload when it is not.
+
+    The caller confirms by POSTing the confirm_token to /api/write exactly
+    as any other write — the full pipeline (snapshot + atomic write +
+    IndexCache rebuild) is reused unchanged.
+    """
+    _purge_expired_pending()
+    target = Path(body.path).expanduser().resolve()
+
+    files, _, _ = _cache(req).snapshot()
+    in_scope = {Path(f.path): f for f in files}
+
+    entry = in_scope.get(target)
+    if entry is None:
+        raise HTTPException(status_code=400, detail=f"path not in scanned set: {body.path}")
+
+    kind = entry.kind
+
+    # Kinds for which autoload toggling has no defined mechanism.
+    NOT_APPLICABLE = {
+        "claude_md": "CLAUDE.md loads whenever its directory is on the ancestor walk — there is no opt-out field",
+        "settings": "settings.json loads based on cwd — there is no per-file toggle",
+        "mcp": "The .mcp.json file itself is always loaded; individual servers are toggled via Extensions",
+        "automemory": "Auto-memory is managed by Claude Code — it cannot be toggled here",
+        "plugin_manifest": "Plug-in manifests are managed by Claude Code. Enable or disable individual skills via the Extensions tab",
+        "plugin_registry": "Plug-in registry is managed by Claude Code and cannot be toggled here",
+        "script": "Hook scripts are lifecycle callbacks, not loaded context",
+        "memory_index": "MEMORY.md is the knowledge index — disabling it would break all knowledge file discovery",
+    }
+    if kind in NOT_APPLICABLE:
+        return AutoloadTogglePreviewResponse(
+            toggle_applicable=False,
+            reason=NOT_APPLICABLE[kind],
+        )
+
+    # --- rule ---
+    if kind == "rule":
+        if not entry.writable:
+            raise HTTPException(status_code=403, detail="rule file is not writable")
+        try:
+            current = target.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"read error: {exc}")
+        new_content, mechanism = _autoload_toggle_rule(target, current, body.enabled)
+        write_target = target
+        current_for_diff = current
+
+    # --- skill ---
+    elif kind == "skill":
+        # Skills toggle writes to settings.json, not the SKILL.md itself.
+        # Derive the skill literal: Skill(<plugin_id>:<name> *)
+        # We need the plugin_id and name from the manifest.
+        skill_literal = _derive_skill_literal(target)
+        if skill_literal is None:
+            return AutoloadTogglePreviewResponse(
+                toggle_applicable=False,
+                reason="Could not derive skill identifier from SKILL.md — check that the frontmatter has a valid name field",
+            )
+        settings_path = config.CLAUDE_DIR / "settings.json"
+        try:
+            current_for_diff = settings_path.read_text(encoding="utf-8") if settings_path.is_file() else "{}\n"
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"settings.json read error: {exc}")
+        new_content, mechanism = _autoload_toggle_skill(target, current_for_diff, body.enabled, skill_literal)
+        write_target = settings_path
+
+    # --- memory ---
+    elif kind == "memory":
+        # Memory files load only when referenced. Determine how this file is referenced:
+        # (a) @-import in a CLAUDE.md or rule file, or
+        # (b) entry in MEMORY.md knowledge index.
+        # Try (a) first; fall back to (b).
+        parent_path, line_number, raw_line = _find_at_import_parent(files, target)
+        if parent_path is not None and line_number is not None:
+            try:
+                current_for_diff = parent_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"parent read error: {exc}")
+            new_content, mechanism = _autoload_toggle_knowledge_import(
+                parent_path, current_for_diff, target, line_number, raw_line or "", body.enabled
+            )
+            write_target = parent_path
+        else:
+            # Try MEMORY.md
+            memory_index = config.CLAUDE_DIR / "knowledge" / "MEMORY.md"
+            new_content_opt, mechanism = _autoload_toggle_knowledge_memory_index(
+                memory_index, target, body.enabled
+            )
+            if new_content_opt is None:
+                return AutoloadTogglePreviewResponse(
+                    toggle_applicable=False,
+                    reason="This file is not referenced by any @-import or MEMORY.md entry — it is already only loaded on-demand",
+                )
+            try:
+                current_for_diff = memory_index.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"MEMORY.md read error: {exc}")
+            new_content = new_content_opt
+            write_target = memory_index
+
+    else:
+        return AutoloadTogglePreviewResponse(
+            toggle_applicable=False,
+            reason=f"Autoload toggling is not supported for kind '{kind}'",
+        )
+
+    # Common: verify writable (for write_target, not necessarily the original file)
+    write_entry = in_scope.get(write_target)
+    if write_entry is not None and not write_entry.writable:
+        raise HTTPException(status_code=403, detail=f"target file '{write_target}' is not writable")
+
+    base_hash = writer.compute_content_hash(current_for_diff)
+    diff_lines = difflib.unified_diff(
+        current_for_diff.splitlines(keepends=True),
+        new_content.splitlines(keepends=True),
+        fromfile=f"a/{config.collapse_home(write_target)}",
+        tofile=f"b/{config.collapse_home(write_target)}",
+        n=3,
+    )
+    diff = "".join(diff_lines)
+
+    confirm_token = uuid.uuid4().hex
+    PENDING_WRITES[confirm_token] = PendingWrite(
+        path=str(write_target),
+        new_content=new_content,
+        base_hash=base_hash,
+        is_creation=False,
+        created_at=datetime.now(timezone.utc),
+    )
+    return AutoloadTogglePreviewResponse(
+        toggle_applicable=True,
+        confirm_token=confirm_token,
+        diff=diff,
+        base_hash=base_hash,
+        is_creation=False,
+        new_enabled=body.enabled,
+        mechanism=mechanism,
+    )
+
+
+def _derive_skill_literal(skill_md_path: Path) -> str | None:
+    """Derive the Skill(<plugin_id>:<name> *) literal from a SKILL.md path.
+
+    SKILL.md lives at ~/.claude/skills/<plugin_id>/SKILL.md or inside a
+    plugin's cached snapshot. We infer plugin_id from the parent directory
+    name and name from the SKILL.md frontmatter.
+    """
+    import yaml as _yaml_inner
+    try:
+        text = skill_md_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    fm, _ = _split_frontmatter(text)
+    name = fm.get("name") if fm else None
+    if not name:
+        return None
+    plugin_id = skill_md_path.parent.name
+    return f"Skill({plugin_id}:{name} *)"
 
 
 @router.get("/events")
