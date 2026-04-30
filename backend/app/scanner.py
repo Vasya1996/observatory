@@ -7,7 +7,6 @@ to re-classify by extension or location.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -74,10 +73,11 @@ def scan() -> list[RawFile]:
     out: list[RawFile] = []
 
     # Top-level CLAUDE.md files.
-    for p, kind in [
+    top_level: list[tuple[Path, FileKind]] = [
         (config.HOME / "CLAUDE.md", "claude_md"),
         (config.CLAUDE_DIR / "CLAUDE.md", "claude_md"),
-    ]:
+    ]
+    for p, kind in top_level:
         if _exists_file(p):
             out.append(RawFile(p, kind))
 

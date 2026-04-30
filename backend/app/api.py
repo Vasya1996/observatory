@@ -8,6 +8,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
@@ -613,7 +614,7 @@ def post_migrate_preview(
     """
     _purge_expired_pending()
     cache = _cache(req)
-    files, edges, _ = cache.snapshot()
+    _, _, _ = cache.snapshot()
 
     source = Path(body.source_path).expanduser().resolve()
     if not source.is_file():
@@ -1320,7 +1321,7 @@ def get_tier2_events(session_id: str = Query(None)) -> dict:
 
 
 @router.get("/tier2-compare")
-def get_tier2_compare(req: Request, cwd: str = Query(...), session_id: str = Query(None)) -> dict:
+def get_tier2_compare(req: Request, cwd: str = Query(...), session_id: Optional[str] = Query(None)) -> dict:
     """Compare Tier 2 hook events against simulator prediction for a cwd.
 
     For each file:

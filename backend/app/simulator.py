@@ -141,7 +141,7 @@ def simulate(
 
     def _push(file: FileEntry, status: str, matched_on: str | None, reason: str | None):
         nonlocal conditional_count
-        _slot, is_canonical, _canonical_path, _nc_reason = classify_step(
+        _, is_canonical, _, _ = classify_step(
             file.path, matched_on, status, cwd
         )
         steps.append(

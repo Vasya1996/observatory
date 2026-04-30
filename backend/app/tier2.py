@@ -34,15 +34,12 @@ Comparator logic (3 outcomes per file per cwd):
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import stat
-import time
 from pathlib import Path
 from typing import Optional
 
 from . import config
-from .content_hash import sha256_of_body
 
 # Where the hook writes its JSONL events.
 INSTRUCTIONS_JSONL = config.CLAUDE_DIR / ".observatory" / "instructions.jsonl"
@@ -298,14 +295,10 @@ def maybe_rotate_jsonl() -> None:
 
 def read_events(
     session_id: Optional[str] = None,
-    since_ts: Optional[float] = None,
 ) -> list[dict]:
     """Read all InstructionsLoaded events from instructions.jsonl.
 
     If session_id is given, only return events for that session.
-    If since_ts is given, skip events whose host mtime is older (approximation;
-    the JSONL itself carries no per-line timestamps).
-
     Events are returned in file order. Both the live file and the backup are
     checked (backup first so older events precede newer).
     """
