@@ -6,7 +6,6 @@ target is opportunistic — absent files are silently skipped) and strict about
 """
 from __future__ import annotations
 
-import os
 import platform
 from pathlib import Path
 
@@ -108,7 +107,7 @@ def is_blacklisted(path: Path) -> bool:
     # projects/* is blacklisted except the auto-memory subdir.
     projects = CLAUDE_DIR / "projects"
     try:
-        rel = resolved.relative_to(projects)
+        resolved.relative_to(projects)
         # Allow the auto-memory subdir.
         try:
             resolved.relative_to(AUTO_MEMORY_DIR)

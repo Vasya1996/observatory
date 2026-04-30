@@ -15,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import canonical, config, paths_proposals, scanner, writer
 from .markdown_merge import plan_merge
 from .models import (
+    CommittedFile,
     CwdEntry,
     DeleteConfirmRequest,
     DeleteConfirmResponse,
@@ -34,13 +35,14 @@ from .models import (
     MigratePreviewRequest,
     MigratePreviewResponse,
     NonCanonicalEntry,
-    NonCanonicalResponse,
     NonCanonicalWithSuppressResponse,
     PathProposalsResponse,
     PendingWrite,
     PluginCard,
     PreviewRequest,
     PreviewResponse,
+    RestoreFromSnapshotRequest,
+    RestoreFromSnapshotResponse,
     SimDiffResult,
     SimulatorResponse,
     SkillCard,
@@ -51,7 +53,7 @@ from .models import (
     WriteResponse,
 )
 from .orphan_imports import find_importers
-from .sim_diff import compare_states, snapshot_simulator_state
+from .sim_diff import snapshot_simulator_state
 from .resolver import parsed_for_path
 from .simulator import simulate
 from .state import load as state_load
@@ -642,7 +644,7 @@ def post_migrate_preview(
         if not body.paths_globs:
             raise HTTPException(
                 status_code=422,
-                detail="On-demand drop requires path patterns — supply paths_globs",
+                detail="Please provide at least one path pattern.",
             )
         fm, _ = _split_frontmatter(source_body)
         existing = fm.get("paths") or []
@@ -690,19 +692,19 @@ def post_migrate_preview(
         if not body.target_cwd:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    "Moving to a project requires a project folder — "
-                    "supply target_cwd"
-                ),
+                detail="Please pick which project folder to move this rule into.",
             )
         target_cwd = Path(body.target_cwd).expanduser().resolve()
         if not target_cwd.is_dir():
             raise HTTPException(
-                status_code=400,
-                detail=f"target_cwd is not a directory: {body.target_cwd}",
+                status_code=422,
+                detail="That project folder doesn't exist anymore. Pick a different one.",
             )
         # Destination: <target_cwd>/.claude/rules/<source_filename>
-        dest_file = target_cwd / ".claude" / "rules" / source.name
+        # Create the rules directory if it doesn't exist yet — no error.
+        dest_rules_dir = target_cwd / ".claude" / "rules"
+        dest_rules_dir.mkdir(parents=True, exist_ok=True)
+        dest_file = dest_rules_dir / source.name
 
         # Plan 1: create rule at new project location.
         diff_create = "".join(
@@ -955,9 +957,14 @@ def post_migrate_finalize(body: MigrateFinalizeRequest) -> MigrateFinalizeRespon
         raise HTTPException(status_code=404, detail="migration_id not found")
 
     if body.status == "commit":
+        entries = list(MIGRATION_SNAPSHOTS.get(body.migration_id, []))
         MIGRATION_SNAPSHOTS.pop(body.migration_id, None)
         MIGRATION_TOKENS.pop(body.migration_id, None)
-        return MigrateFinalizeResponse(finalized=True)
+        committed = [
+            CommittedFile(path=path_str, snapshot_id=snap_id)
+            for path_str, snap_id in entries
+        ]
+        return MigrateFinalizeResponse(finalized=True, committed_files=committed)
 
     # Rollback: restore in reverse, collect results.
     entries = list(MIGRATION_SNAPSHOTS.get(body.migration_id, []))
@@ -1098,6 +1105,77 @@ def post_delete_undo(req: Request, body: DeleteUndoRequest) -> DeleteUndoRespons
         pass
 
     return DeleteUndoResponse(restored=True)
+
+
+@router.post("/restore-from-snapshot", response_model=RestoreFromSnapshotResponse)
+def post_restore_from_snapshot(
+    req: Request, body: RestoreFromSnapshotRequest
+) -> RestoreFromSnapshotResponse:
+    """Restore a file to a previous snapshot, enabling post-commit undo.
+
+    Validates the snapshot exists, takes a fresh snapshot of the current state
+    (so the user can undo the undo), then atomically restores the file. Triggers
+    a reindex so the UI reflects the restored content immediately.
+
+    Returns {restored: true, new_snapshot_id: <id>} on success.
+    404 when the snapshot is missing (rotated out of the last-10 retention):
+        "Couldn't undo — backup files have rotated out. Try restoring from a more recent edit."
+    403 when the target path is not writable per the WRITABLE_KINDS whitelist.
+    """
+    target = Path(body.path).expanduser().resolve()
+
+    # Permission check: only writable kinds can be restored through Observatory.
+    from .resolver import WRITABLE_KINDS
+    files, _, _ = _cache(req).snapshot()
+    in_scope = {Path(f.path): f for f in files}
+    entry = in_scope.get(target)
+    if entry is not None and not entry.writable:
+        raise HTTPException(
+            status_code=403,
+            detail=f"File kind '{entry.kind}' cannot be modified through Observatory.",
+        )
+
+    # Validate snapshot exists: <snapshots_root>/<sha1-of-path>/<snapshot_id>.snap
+    snap_dir = writer._target_dir(target)
+    snap_path = snap_dir / f"{body.snapshot_id}.snap"
+    if not snap_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Couldn't undo — backup files have rotated out. "
+                "Try restoring from a more recent edit."
+            ),
+        )
+
+    # Take a fresh snapshot of the current state before overwriting.
+    try:
+        new_snap_id = writer.take_snapshot(target)
+    except OSError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Couldn't take a safety backup before restoring: {e}",
+        )
+
+    # Restore the snapshot bytes atomically.
+    try:
+        writer.restore_snapshot(target, body.snapshot_id)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Couldn't undo — backup files have rotated out. "
+                "Try restoring from a more recent edit."
+            ),
+        )
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Restore failed: {e}")
+
+    try:
+        _cache(req).rebuild_sync()
+    except Exception:
+        pass
+
+    return RestoreFromSnapshotResponse(restored=True, new_snapshot_id=new_snap_id)
 
 
 @router.get("/tier2-status")

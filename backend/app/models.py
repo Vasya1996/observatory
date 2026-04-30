@@ -347,11 +347,37 @@ class MigrateFinalizeRequest(BaseModel):
     status: Literal["commit", "rollback"]
 
 
+class CommittedFile(BaseModel):
+    """A single file committed during a migration, with its pre-write snapshot.
+
+    Returned in MigrateFinalizeResponse.committed_files so the frontend can
+    offer a post-commit undo button via POST /api/restore-from-snapshot.
+    """
+    path: str
+    snapshot_id: str
+
+
 class MigrateFinalizeResponse(BaseModel):
     finalized: bool = False
     rolled_back: Optional[int] = None
     # Set on partial rollback failure: which paths restored vs failed.
     partial_rollback: Optional[dict[str, list[str]]] = None
+    # Populated on commit: the pre-write snapshots for each file in the batch.
+    # The frontend stores these and exposes an "Undo (≤7 days)" button.
+    # Empty list when status == "rollback".
+    committed_files: list[CommittedFile] = Field(default_factory=list)
+
+
+class RestoreFromSnapshotRequest(BaseModel):
+    path: str
+    snapshot_id: str
+
+
+class RestoreFromSnapshotResponse(BaseModel):
+    restored: bool
+    # The snapshot taken of the current (pre-restore) state, so the user can
+    # undo the undo if needed.
+    new_snapshot_id: str
 
 
 class DeletePreviewRequest(BaseModel):
