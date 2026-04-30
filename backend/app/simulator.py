@@ -28,8 +28,28 @@ from typing import Optional
 import pathspec
 
 from . import config
-from .canonical import classify_step
+from .canonical import (
+    SLOT_ANCESTOR_WALK,
+    SLOT_AUTO_MEMORY,
+    SLOT_MANAGED,
+    SLOT_ON_DEMAND,
+    SLOT_PROJECT,
+    SLOT_USER_GLOBAL,
+    classify_step,
+)
 from .models import Edge, FileEntry, SimulatorResponse, SimulatorStats, TimelineStep
+
+# Priority numbers corresponding to Claude's official 6-slot load order.
+# These must stay in sync with the slot constants in canonical.py and with
+# the locked rule #56 semantics in the blueprint.
+_SLOT_PRIORITY: dict[str, int] = {
+    SLOT_MANAGED: 1,
+    SLOT_USER_GLOBAL: 2,
+    SLOT_ANCESTOR_WALK: 3,
+    SLOT_PROJECT: 4,
+    SLOT_AUTO_MEMORY: 5,
+    SLOT_ON_DEMAND: 6,
+}
 
 # Tokens-per-line placeholder. Real Claude Code tokens-per-line is ~10-15
 # depending on content; 12 is a workable midpoint. This is a rough estimate
@@ -141,9 +161,16 @@ def simulate(
 
     def _push(file: FileEntry, status: str, matched_on: str | None, reason: str | None):
         nonlocal conditional_count
-        _, is_canonical, _, _ = classify_step(
-            file.path, matched_on, status, cwd
+        slot, is_canonical, _, _ = classify_step(
+            file.path, matched_on, status, cwd, kind=file.kind
         )
+        # conditional = paths: globs present but didn't match this cwd → on-demand for
+        # this session.  skipped = mention-reachable only → always on-demand.  Both
+        # map to priority 6 regardless of where the file lives on disk.
+        if status in ("conditional", "skipped"):
+            priority = _SLOT_PRIORITY[SLOT_ON_DEMAND]
+        else:
+            priority = _SLOT_PRIORITY.get(slot, 6)
         steps.append(
             TimelineStep(
                 idx=len(steps),
@@ -153,6 +180,7 @@ def simulate(
                 matched_on=matched_on,
                 reason=reason,
                 is_canonical=is_canonical,
+                priority=priority,
             )
         )
         if status == "loaded":

@@ -111,6 +111,16 @@ class TimelineStep(BaseModel):
     # Yellow border in SimulatorView when False. Non-breaking — old clients
     # that don't know this field ignore it.
     is_canonical: bool = True
+    # Phase 4 enrichment: load-order priority matching Claude's official 6-slot chain.
+    # Slot → priority mapping:
+    #   managed      = 1  (org-managed /etc/claude-code/CLAUDE.md)
+    #   user-global  = 2  (~/.claude/CLAUDE.md + always-loaded rules)
+    #   ancestor-walk= 3  (CLAUDE.md / CLAUDE.local.md walked from cwd to ~)
+    #   project      = 4  (<cwd>/.claude/CLAUDE.md + per-project rules)
+    #   auto-memory  = 5  (~/.claude/projects/<proj>/memory/*)
+    #   on-demand    = 6  (paths-scoped rules, mention-reachable, nested CLAUDE.md)
+    # Non-breaking: defaults to 6 (on-demand) so older serialised steps parse safely.
+    priority: int = 6
 
 
 class SimulatorStats(BaseModel):
