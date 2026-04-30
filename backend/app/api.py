@@ -37,6 +37,7 @@ from .models import (
     MigratePreviewResponse,
     NonCanonicalEntry,
     NonCanonicalWithSuppressResponse,
+    OrphanConfigEntry,
     PathProposalsResponse,
     PendingWrite,
     PluginCard,
@@ -559,8 +560,14 @@ def get_non_canonical(req: Request, cwd: str = Query(...)) -> NonCanonicalWithSu
         )
     suppressed_cwds = writer.load_suppressed()
     is_suppressed = str(cwd_resolved) in suppressed_cwds
+
+    from .scanner import discover_cwds as _discover_cwds
+    all_cwds = [Path(c).resolve() for c in _discover_cwds()]
+    orphan_configs = canonical.find_orphan_configs(files, all_cwds)
+
     return NonCanonicalWithSuppressResponse(
         non_canonical=entries,
+        orphan_configs=orphan_configs,
         suppressed=is_suppressed,
     )
 

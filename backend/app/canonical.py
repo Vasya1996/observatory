@@ -1,17 +1,21 @@
 """Canonical-slot classification for the Phase 3 Simulator ribbon.
 
 classify_canonical(file_path, step, cwd) -> (slot_name, is_canonical, reason)
+find_orphan_configs(files, cwds) -> list[OrphanConfigEntry]
 
 Used by:
   - /api/simulate  to enrich each TimelineStep with is_canonical: bool
-  - /api/non-canonical  to list files at non-canonical paths with reasons
+  - /api/non-canonical  to list files at non-canonical paths with reasons + orphans
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from . import config
+
+if TYPE_CHECKING:
+    from .models import FileEntry, OrphanConfigEntry
 
 # Canonical slot names (match Phase 3 plan section 1 order).
 SLOT_MANAGED = "managed"
@@ -216,3 +220,167 @@ def _ancestors_to_home(cwd: Path) -> list[Path]:
         cur = cur.parent
         out.append(cur)
     return out
+
+
+# Sub-directory names that, when they contain a CLAUDE.md but their *parent*
+# cwd has no top-level CLAUDE.md / .claude/CLAUDE.md, strongly suggest the
+# user intended that file as a global-scope config (i.e. the "buried config"
+# trap). The set is conservative — only names whose semantic meaning clearly
+# implies cross-project applicability.
+_CONFIG_DUMP_SUBDIR_NAMES = frozenset({
+    "global", "project", "common", "shared", "rules",
+})
+
+
+def find_orphan_configs(
+    files: "list[FileEntry]",
+    cwds: list[Path],
+) -> "list[OrphanConfigEntry]":
+    """Return every claude_md / rule file that is never loaded by Claude in any
+    discovered cwd.
+
+    A file is NOT orphaned when it matches at least one of:
+      - ~/.claude/CLAUDE.md, ~/CLAUDE.md, ~/CLAUDE.local.md,
+        ~/.claude/CLAUDE.local.md, ~/.claude/rules/<name>.md  (user-global)
+      - OS-managed CLAUDE.md path  (managed)
+      - <cwd>/CLAUDE.md, <cwd>/CLAUDE.local.md,
+        <cwd>/.claude/CLAUDE.md, <cwd>/.claude/rules/<name>.md
+        for ANY cwd  (project zone)
+      - <ancestor>/CLAUDE.md or <ancestor>/CLAUDE.local.md for ANY ancestor
+        spine of ANY cwd  (ancestor-walk)
+      - <cwd>/<subdir>/CLAUDE.md for ANY cwd, EXCEPT when:
+          * subdir name is in _CONFIG_DUMP_SUBDIR_NAMES AND
+          * the parent cwd has no top-level CLAUDE.md and no .claude/CLAUDE.md
+        (in that exception case → flagged as buried_in_config_folder)
+    """
+    from .models import OrphanConfigEntry  # local import avoids circular dep
+
+    home = config.HOME
+    claude_dir = config.CLAUDE_DIR
+
+    # Build the full set of "safe" (non-orphan) absolute paths.
+    safe: set[Path] = set()
+
+    # User-global files that are always safe.
+    for p in [
+        home / "CLAUDE.md",
+        home / "CLAUDE.local.md",
+        claude_dir / "CLAUDE.md",
+        claude_dir / "CLAUDE.local.md",
+    ]:
+        safe.add(p.resolve() if p.exists() else p)
+
+    for p in (claude_dir / "rules").glob("*.md") if (claude_dir / "rules").is_dir() else []:
+        safe.add(p.resolve())
+
+    managed = config.os_managed_claude_md_path()
+    safe.add(managed.resolve() if managed.exists() else managed)
+
+    # Build ancestor spines once for all cwds (large overlap expected).
+    all_ancestors: set[Path] = set()
+    for cwd in cwds:
+        for anc in _ancestors_to_home(cwd):
+            all_ancestors.add(anc)
+
+    # Project-zone files for every cwd + their ancestor spines.
+    for cwd in cwds:
+        # Top-level project files.
+        for name in ("CLAUDE.md", "CLAUDE.local.md"):
+            p = cwd / name
+            safe.add(p.resolve() if p.exists() else p)
+        dot_claude_md = cwd / ".claude" / "CLAUDE.md"
+        safe.add(dot_claude_md.resolve() if dot_claude_md.exists() else dot_claude_md)
+        if (cwd / ".claude" / "rules").is_dir():
+            for p in (cwd / ".claude" / "rules").glob("*.md"):
+                safe.add(p.resolve())
+
+    # Ancestor-walk spine files (CLAUDE.md and CLAUDE.local.md at each level).
+    for anc in all_ancestors:
+        for name in ("CLAUDE.md", "CLAUDE.local.md"):
+            p = anc / name
+            safe.add(p.resolve() if p.exists() else p)
+
+    # Collect which parent cwds have their own top-level CLAUDE.md — used to
+    # distinguish real projects from config-dump folders.
+    cwds_with_top_level_claude_md: set[Path] = set()
+    for cwd in cwds:
+        if (cwd / "CLAUDE.md").is_file() or (cwd / ".claude" / "CLAUDE.md").is_file():
+            cwds_with_top_level_claude_md.add(cwd)
+
+    # Collect nested CLAUDE.md files for every cwd: <cwd>/<subdir>/CLAUDE.md.
+    # These are on-demand canonical unless they hit the buried-config heuristic.
+    nested_safe: set[Path] = set()
+    buried: set[Path] = set()
+    for cwd in cwds:
+        if not cwd.is_dir():
+            continue
+        try:
+            subdirs = [s for s in cwd.iterdir() if s.is_dir() and not s.name.startswith(".")]
+        except OSError:
+            continue
+        for sub in subdirs:
+            nested = sub / "CLAUDE.md"
+            if not nested.is_file():
+                continue
+            resolved = nested.resolve()
+            if (
+                sub.name in _CONFIG_DUMP_SUBDIR_NAMES
+                and cwd not in cwds_with_top_level_claude_md
+            ):
+                # Parent cwd is a config-dump folder, not a real project.
+                buried.add(resolved)
+            else:
+                nested_safe.add(resolved)
+
+    results: list[OrphanConfigEntry] = []
+    for f in files:
+        if f.kind not in ("claude_md", "rule"):
+            continue
+
+        fp_str = f.path
+        if fp_str.startswith("~/"):
+            fp = home / fp_str[2:]
+        else:
+            fp = Path(fp_str)
+        try:
+            fp_resolved = fp.resolve()
+        except OSError:
+            fp_resolved = fp
+
+        if fp_resolved in safe:
+            continue
+        if fp_resolved in nested_safe:
+            continue
+
+        # Build suggested canonical paths.
+        basename = fp_resolved.name
+        if f.kind == "claude_md":
+            suggestions = [
+                "~/.claude/CLAUDE.md (merge into)",
+                f"~/.claude/rules/{basename} (move as separate rule)",
+            ]
+        else:
+            suggestions = [
+                f"~/.claude/rules/{basename}",
+            ]
+            # Add project-zone suggestion using first cwd.
+            if cwds:
+                suggestions.append(
+                    config.collapse_home(cwds[0] / ".claude" / "rules" / basename)
+                )
+
+        if fp_resolved in buried:
+            reason: str = "buried_in_config_folder"
+        else:
+            reason = "outside_load_chain"
+
+        results.append(
+            OrphanConfigEntry(
+                file_path=str(fp_resolved),
+                kind=f.kind,  # type: ignore[arg-type]
+                suggested_canonical_paths=suggestions,
+                reason=reason,  # type: ignore[arg-type]
+            )
+        )
+
+    return results

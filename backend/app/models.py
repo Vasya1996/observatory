@@ -423,6 +423,25 @@ class SuppressRequest(BaseModel):
     suppressed: bool
 
 
+class OrphanConfigEntry(BaseModel):
+    """A claude_md or rule file that exists on disk but is never loaded by Claude
+    in any discovered cwd — not on the ancestor-walk spine, not in a project zone,
+    not in ~/.claude/.
+
+    Surfaces the "buried config" trap: the user named a folder 'global' or
+    'shared', placed a CLAUDE.md inside, and assumed it applied everywhere, but
+    Claude Code never auto-loads it unless the session cwd happens to be inside
+    that folder.
+    """
+    file_path: str
+    kind: Literal["claude_md", "rule"]
+    suggested_canonical_paths: list[str]
+    reason: Literal["outside_load_chain", "buried_in_config_folder"]
+
+
 class NonCanonicalWithSuppressResponse(BaseModel):
     non_canonical: list[NonCanonicalEntry]
+    # Orphan configs are independent of the active cwd; same list in every
+    # response. Computed once per request inside /api/non-canonical.
+    orphan_configs: list[OrphanConfigEntry] = Field(default_factory=list)
     suppressed: bool
