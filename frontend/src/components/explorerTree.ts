@@ -1,49 +1,69 @@
 /**
- * explorerTree.ts — Build a hierarchical tree from a flat FileEntry list.
+ * explorerTree.ts — Build a priority-ordered tree from a flat FileEntry list.
  *
- * Three always-visible zones (locked rule #50):
- *   • USER CONFIG  — ~/.claude/ but NOT ~/.claude/plugins/cache/
- *                    Always visible regardless of cwd.
- *   • PROJECT      — files under the actively-selected cwd (and not in
- *                    user-config or settings regions).
- *                    When cwd changes, this zone refreshes.
- *   • SETTINGS & PLUGINS — settings.json, .mcp.json, plugins/cache/...,
- *                    OS-managed CLAUDE.md. Always visible.
- *   • OTHER        — safety net for files that don't fit any zone.
- *                    Auto-collapsed.
+ * Phase 4 final wave: zones (USER CONFIG / PROJECT / SETTINGS) are gone.
+ * The tree shows a single root of files INSIDE the active cwd, grouped by
+ * the 6 load-order priority tiers, with folder nesting preserved within
+ * each tier.
+ *
+ *   Tier 1: Managed      — OS-wide policy CLAUDE.md
+ *   Tier 2: User-global  — ~/.claude/CLAUDE.md + rules without paths:
+ *   Tier 3: Ancestor-walk — CLAUDE.md / CLAUDE.local.md up the directory tree
+ *   Tier 4: Project      — CLAUDE.md and rules inside this project
+ *   Tier 5: Auto-memory  — MEMORY.md + topic files from auto-memory dir
+ *   Tier 6: On-demand    — paths-scoped rules, nested CLAUDE.md, etc.
+ *
+ * Files OUTSIDE the active cwd are handled by CrossCwdPanel (above the tree).
+ * This tree only shows files whose physical path is under activeCwd.
+ *
+ * "Off-chain" files (priority absent / 7+, or not in the priorityMap) appear
+ * below all tiers in an "All files" catch-all group — always collapsed.
  *
  * Grouping is purely frontend (locked rule #30 — no backend restructuring).
- * Paths are derived from FileEntry.path; home prefix inferred from the file
- * list (locked rule #47 — no hardcoded /home/voxdecaelo).
  */
 
 import type { FileEntry } from "../types";
 
+// ---- Data shapes -----------------------------------------------------------
+
 export interface TreeNode {
-  id: string;           // file id (from FileEntry)
+  id: string;
   path: string;
-  display: string;      // basename or display_name
+  display: string;
   kind: FileEntry["kind"];
   isOrphan: boolean;
   file: FileEntry;
-  children: TreeNode[]; // unused (files are leaves); kept for type compat
+  children: TreeNode[];
 }
 
 export interface TreeFolder {
-  id: string;           // "folder:" + absolute path
-  label: string;        // directory name segment
-  fullPath: string;     // absolute path of the folder
+  id: string;
+  label: string;
+  fullPath: string;
   children: (TreeFolder | TreeNode)[];
   defaultOpen: boolean;
 }
 
 export interface TreeGroup {
-  id: string;           // "user-config" | "project" | "settings" | "other"
-  label: string;        // human-readable group header
+  id: string;
+  label: string;
   defaultOpen: boolean;
   children: (TreeFolder | TreeNode)[];
   count: number;
 }
+
+// ---- Tier metadata ---------------------------------------------------------
+
+const TIER_LABELS: Record<number, string> = {
+  1: "Managed",
+  2: "User-global",
+  3: "Ancestor-walk",
+  4: "Project",
+  5: "Auto-memory",
+  6: "On-demand",
+};
+
+// ---- Helpers ---------------------------------------------------------------
 
 export function deriveHomeFromFiles(files: FileEntry[]): string {
   for (const f of files) {
@@ -90,17 +110,15 @@ function fileToNode(f: FileEntry, orphanIds: Set<string>): TreeNode {
 }
 
 /**
- * Build a true nested folder tree from a flat list of files rooted at basePath.
+ * Build a nested folder tree from a flat list of files rooted at basePath.
  * Every distinct directory segment gets its own TreeFolder node.
- * Single-child folders are NOT flattened — we always show the full path.
- * Default-open: small folders (≤3 children) auto-expand for usability.
+ * Default-open: folders with ≤3 children auto-expand.
  */
 function buildFolderTree(
   files: FileEntry[],
   basePath: string,
   orphanIds: Set<string>,
 ): (TreeFolder | TreeNode)[] {
-  // Group files by their immediate child segment under basePath.
   const byFirstSegment = new Map<string, FileEntry[]>();
 
   for (const f of files) {
@@ -114,8 +132,7 @@ function buildFolderTree(
     }
 
     const slashIdx = rel.indexOf("/");
-    const firstSegment = slashIdx !== -1 ? rel.slice(0, slashIdx) : "";
-    const key = firstSegment;
+    const key = slashIdx !== -1 ? rel.slice(0, slashIdx) : "";
     if (!byFirstSegment.has(key)) byFirstSegment.set(key, []);
     byFirstSegment.get(key)!.push(f);
   }
@@ -124,20 +141,17 @@ function buildFolderTree(
 
   for (const [segment, group] of byFirstSegment) {
     if (segment === "") {
-      // Files sitting directly in basePath (no subdirectory)
       for (const f of group) {
         result.push(fileToNode(f, orphanIds));
       }
     } else {
       const folderPath = basePath + "/" + segment;
       const subItems = buildFolderTree(group, folderPath, orphanIds);
-      // Auto-expand if ≤3 children (usability for small dirs)
-      const small = subItems.length <= 3;
       result.push({
         id: "folder:" + folderPath,
         label: segment,
         fullPath: folderPath,
-        defaultOpen: small,
+        defaultOpen: subItems.length <= 3,
         children: subItems,
       });
     }
@@ -146,167 +160,75 @@ function buildFolderTree(
   return result;
 }
 
-/**
- * Returns true if the file belongs to the SETTINGS & PLUGINS zone regardless
- * of which cwd is active. This covers settings.json, .mcp.json, plugins/cache/,
- * managed CLAUDE.md at OS paths, and kinds like skill/plugin_manifest.
- */
-function isSettingsZone(f: FileEntry, home: string): boolean {
-  const claudeDir = home ? home + "/.claude" : "/.claude";
-  const pluginCacheDir = claudeDir + "/plugins/cache";
-
-  // Files inside plugins/cache/ always go to Settings & Plugins
-  if (f.path.startsWith(pluginCacheDir + "/") || f.path === pluginCacheDir) {
-    return true;
-  }
-
-  // settings.json and .mcp.json at the root ~/.claude/
-  const p = f.path;
-  if (p === claudeDir + "/settings.json") return true;
-  if (p === claudeDir + "/settings.local.json") return true;
-  if (p === claudeDir + "/.mcp.json") return true;
-
-  // Kind-based: skills, plugin manifests, plugin registry, MCP, settings, scripts
-  const settingsKinds: FileEntry["kind"][] = [
-    "settings",
-    "mcp",
-    "skill",
-    "plugin_manifest",
-    "plugin_registry",
-    "script",
-  ];
-  if (settingsKinds.includes(f.kind)) return true;
-
-  // OS-managed CLAUDE.md (Linux: /etc/claude-code/CLAUDE.md, macOS: /Library/...)
-  if (
-    f.path === "/etc/claude-code/CLAUDE.md" ||
-    f.path.startsWith("/Library/Application Support/ClaudeCode/") ||
-    f.path.startsWith("C:\\Program Files\\ClaudeCode\\")
-  ) {
-    return true;
-  }
-
-  return false;
-}
+// ---- Public API ------------------------------------------------------------
 
 /**
- * Returns true if the file belongs to the USER CONFIG zone:
- * path under ~/.claude/ but NOT under plugins/cache/.
+ * Build a priority-ordered tree.
+ *
+ * @param files     Full flat file list from /api/index.
+ * @param orphanIds Set of file ids flagged as orphan configs.
+ * @param activeCwd Currently selected cwd path (null = no cwd selected).
+ * @param priorityMap Map from file_id → priority tier (1–6) from /api/simulate.
  */
-function isUserConfigZone(f: FileEntry, home: string): boolean {
-  const claudeDir = home ? home + "/.claude" : "/.claude";
-  const pluginCacheDir = claudeDir + "/plugins/cache";
-
-  if (!f.path.startsWith(claudeDir + "/") && f.path !== claudeDir + "/CLAUDE.md") {
-    return false;
-  }
-  // Exclude the plugins/cache subtree — those go to Settings & Plugins
-  if (f.path.startsWith(pluginCacheDir + "/") || f.path === pluginCacheDir) {
-    return false;
-  }
-  // Settings kinds (settings.json, .mcp.json) inside ~/.claude/ go to Settings zone
-  if (isSettingsZone(f, home)) return false;
-
-  return true;
-}
-
-/**
- * Returns true if the file belongs to the PROJECT zone for the given cwd.
- * Files under the cwd that are not already claimed by User Config or Settings.
- */
-function isProjectZone(f: FileEntry, activeCwd: string, home: string): boolean {
-  if (!activeCwd) return false;
-  if (isSettingsZone(f, home)) return false;
-  if (isUserConfigZone(f, home)) return false;
-
-  return f.path.startsWith(activeCwd + "/") || f.path === activeCwd;
-}
-
 export function buildExplorerTree(
   files: FileEntry[],
   orphanIds: Set<string>,
   activeCwd: string | null,
+  priorityMap: Map<string, number> = new Map(),
 ): TreeGroup[] {
-  const home = deriveHomeFromFiles(files);
-  const claudeDir = home ? home + "/.claude" : "/.claude";
+  // Partition files into those inside the active cwd vs outside.
+  // Only inside-cwd files go into the priority-ordered tree.
+  // Outside-cwd files are handled by CrossCwdPanel — but for the "All files"
+  // catch-all we include everything not mapped to a tier (off-chain).
+  const insideCwd = (f: FileEntry) => {
+    if (!activeCwd) return true; // no cwd = show everything
+    return f.path === activeCwd || f.path.startsWith(activeCwd + "/");
+  };
 
-  const userFiles: FileEntry[] = [];
-  const projectFiles: FileEntry[] = [];
-  const settingsFiles: FileEntry[] = [];
-  const otherFiles: FileEntry[] = [];
+  // Group files by their priority tier.
+  const tierBuckets = new Map<number, FileEntry[]>();
+  const offChain: FileEntry[] = [];
 
   for (const f of files) {
-    if (isSettingsZone(f, home)) {
-      settingsFiles.push(f);
-    } else if (isUserConfigZone(f, home)) {
-      userFiles.push(f);
-    } else if (activeCwd && isProjectZone(f, activeCwd, home)) {
-      projectFiles.push(f);
+    const pri = priorityMap.get(f.id);
+    if (pri !== undefined && pri >= 1 && pri <= 6) {
+      // For the tier tree, only include files inside the cwd (cross-cwd files
+      // appear in CrossCwdPanel above the tree, not here).
+      if (insideCwd(f)) {
+        if (!tierBuckets.has(pri)) tierBuckets.set(pri, []);
+        tierBuckets.get(pri)!.push(f);
+      }
     } else {
-      otherFiles.push(f);
+      // Off-chain: file not in any priority tier (not loaded for this cwd,
+      // or no cwd selected yet). Show all files regardless of cwd location.
+      offChain.push(f);
     }
   }
 
   const groups: TreeGroup[] = [];
+  const cwdRoot = activeCwd ?? "/";
 
-  // --- USER CONFIG ---
-  if (userFiles.length > 0) {
-    const children = buildFolderTree(userFiles, claudeDir, orphanIds);
+  // Emit one group per tier that has files.
+  for (let tier = 1; tier <= 6; tier++) {
+    const bucket = tierBuckets.get(tier);
+    if (!bucket || bucket.length === 0) continue;
+
+    const children = buildFolderTree(bucket, cwdRoot, orphanIds);
     groups.push({
-      id: "user-config",
-      label: "User config",
-      defaultOpen: true,
+      id: `tier-${tier}`,
+      label: TIER_LABELS[tier] ?? `Tier ${tier}`,
+      defaultOpen: tier <= 4, // top 4 tiers open by default
       children,
       count: countItems(children),
     });
   }
 
-  // --- PROJECT ---
-  {
-    const cwdLabel = activeCwd
-      ? buildProjectLabel(activeCwd, home)
-      : null;
-    const label = cwdLabel ? `Project — ${cwdLabel}` : "Project";
-
-    if (activeCwd && projectFiles.length > 0) {
-      const children = buildFolderTree(projectFiles, activeCwd, orphanIds);
-      groups.push({
-        id: "project",
-        label,
-        defaultOpen: true,
-        children,
-        count: countItems(children),
-      });
-    } else {
-      // Always show the zone, even when empty, so the user sees it
-      groups.push({
-        id: "project",
-        label,
-        defaultOpen: true,
-        children: [],
-        count: 0,
-      });
-    }
-  }
-
-  // --- SETTINGS & PLUGINS ---
-  if (settingsFiles.length > 0) {
-    const children = buildFolderTree(settingsFiles, claudeDir, orphanIds);
+  // Off-chain catch-all — collapsed by default.
+  if (offChain.length > 0) {
+    const children = buildFolderTree(offChain, cwdRoot, orphanIds);
     groups.push({
-      id: "settings",
-      label: "Settings & plugins",
-      defaultOpen: false,
-      children,
-      count: countItems(children),
-    });
-  }
-
-  // --- OTHER (safety net) ---
-  if (otherFiles.length > 0) {
-    const children = buildFolderTree(otherFiles, home || "/", orphanIds);
-    groups.push({
-      id: "other",
-      label: "Other",
+      id: "offchain",
+      label: "All files",
       defaultOpen: false,
       children,
       count: countItems(children),
@@ -314,12 +236,6 @@ export function buildExplorerTree(
   }
 
   return groups;
-}
-
-function buildProjectLabel(cwd: string, home: string): string {
-  const collapsed = collapseToHome(cwd, home);
-  if (collapsed === "~") return "Home folder";
-  return collapsed;
 }
 
 /** Flatten all node ids in order (group headers + folder ids + file ids). */
@@ -369,7 +285,7 @@ export function ancestorIds(groups: TreeGroup[], targetId: string): string[] {
   return ancestors;
 }
 
-/** Check if a file is inside ~/.claude/plugins/cache/ (plugin-managed, read-only). */
+/** Check if a file is inside ~/.claude/plugins/cache/ (plugin-managed). */
 export function isPluginCacheFile(path: string, home: string): boolean {
   const pluginCacheDir = (home ? home + "/.claude" : "/.claude") + "/plugins/cache";
   return path.startsWith(pluginCacheDir + "/") || path === pluginCacheDir;

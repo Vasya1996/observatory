@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { postState } from "../api/client";
-import type { Edge, FileEntry, SimulatorMode, UiState, ViewKey } from "../types";
+import type { Edge, FileEntry, UiState, ViewKey } from "../types";
 
 // --- Phase 2 write pipeline shapes ----------------------------------------
 
@@ -92,9 +92,6 @@ interface Store {
   showInternal: boolean;
   setShowInternal: (v: boolean) => void;
 
-  simulatorMode: SimulatorMode;
-  setSimulatorMode: (v: SimulatorMode) => void;
-
   hydrate: (s: UiState) => void;
 
   // --- Phase 2 write pipeline (NOT persisted to /api/state) ----------------
@@ -115,7 +112,6 @@ function snapshot(s: Store): UiState {
     last_view: s.view,
     show_internal: s.showInternal,
     inspector_open: s.inspectorOpen,
-    simulator_mode: s.simulatorMode,
     editor_open: s.editorOpen,
     tree_expanded: [...s.treeExpanded],
     tree_width: s.explorerWidth,
@@ -212,25 +208,21 @@ export const useStore = create<Store>((set, get) => ({
     schedulePersist(get);
   },
 
-  simulatorMode: "per-cwd",
-  setSimulatorMode: (v) => {
-    set({ simulatorMode: v });
-    schedulePersist(get);
-  },
-
   hydrate: (s) => {
     const expanded = s.tree_expanded && s.tree_expanded.length > 0
       ? new Set<string>(s.tree_expanded)
       : DEFAULT_TREE_EXPANDED;
     const rawWidth = s.tree_width ?? EXPLORER_WIDTH_DEFAULT;
     const explorerWidth = Math.max(EXPLORER_WIDTH_MIN, Math.min(EXPLORER_WIDTH_MAX, rawWidth));
+    // Gracefully handle old .state.json with last_view: "sim" — fall back to map.
+    const rawView = s.last_view ?? "map";
+    const view: ViewKey = (rawView === "map" || rawView === "ed" || rawView === "ext") ? rawView : "map";
     set({
       pins: s.pins ?? {},
       lastCwd: s.last_cwd ?? null,
-      view: (s.last_view ?? "map") as ViewKey,
+      view,
       showInternal: s.show_internal ?? false,
       inspectorOpen: s.inspector_open ?? false,
-      simulatorMode: s.simulator_mode ?? "per-cwd",
       editorOpen: s.editor_open ?? false,
       treeExpanded: expanded,
       explorerWidth,

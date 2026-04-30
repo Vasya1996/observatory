@@ -1,34 +1,32 @@
 /**
- * ExplorerPane — 320px fixed-width left column on 01 MAP.
+ * ExplorerPane — 320px fixed-width left column on 01 MAP (locked rule #50).
  *
- * Always-on in MapView, left of the canvas. Shows every file from /api/index
- * in a hierarchical tree grouped by filesystem zone:
- *   - USER CONFIG  — ~/.claude/ (excluding plugins/cache)
- *   - PROJECT      — active cwd's files (refreshes on cwd change)
- *   - SETTINGS & PLUGINS — settings.json, .mcp.json, plugins/cache/
- *   - OTHER        — safety net, auto-collapsed
+ * Phase 4 final wave:
+ *   - Three zones (USER CONFIG / PROJECT / SETTINGS) removed.
+ *   - CrossCwdPanel above the tree: files Claude also reads that live OUTSIDE
+ *     the active cwd (ancestor CLAUDE.md, user-global, managed).
+ *   - Tree below: files INSIDE the active cwd, ordered by priority tier
+ *     (Managed→User-global→Ancestor-walk→Project→Auto-memory→On-demand),
+ *     with folder nesting preserved within each tier.
+ *   - Every file is draggable — no not-allowed cursor, no disabled handles.
+ *     Every drop opens NormalizeWizardModal showing the full consequence diff.
  *
  * Interactions:
  *   single click  → select node in graph + open Inspector (locked rule #24)
  *   double click  → open EditorPanel (locked rule #46)
  *   hover row     → highlight matching graph node + dim others (bidirectional)
  *   hover graph   → highlight matching tree row + faint amber tint
+ *   drag any file → drop opens NormalizeWizardModal (locked rule #36)
  *
- * Search: substring filter on basename + path. Auto-expands parent folders.
- *
- * Expand/collapse: persisted to /api/state via treeExpanded in Zustand.
- * Small folders (≤3 children) default-open per explorerTree.ts logic.
- *
- * Orphan indicator: small amber glyph next to filenames that appear in
- * orphan_configs from /api/non-canonical.
- *
- * Plugin-cache files (under ~/.claude/plugins/cache/): read-only, RMB
- * context-menu Delete is disabled with "Plugin file — managed by Claude Code".
+ * Priority badge: ordinal text (1st–6th) with amber→paper-faint brightness
+ * gradient. Tooltip = slot name in plain language.
+ * Hover "?" on cross-cwd rows → WHY explanation tooltip.
  */
 
 import {
   type Ref,
   forwardRef,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -38,7 +36,7 @@ import { useStore } from "../state/store";
 import { useWritePipeline } from "../hooks/useWritePipeline";
 import { postAutoloadTogglePreview } from "../api/client";
 import { ICON_PATH_BY_KIND } from "./nodeIcons";
-import type { FileEntry, OrphanConfigEntry } from "../types";
+import type { FileEntry, OrphanConfigEntry, TimelineStep } from "../types";
 import {
   buildExplorerTree,
   ancestorIds,
@@ -48,11 +46,51 @@ import {
   type TreeGroup,
   type TreeNode,
 } from "./explorerTree";
+import { NormalizeWizardModal, type NormalizeMode } from "./NormalizeWizardModal";
+import { CrossCwdPanel } from "./CrossCwdPanel";
 
+// ---------------------------------------------------------------------------
+// Priority badge helpers
+// ---------------------------------------------------------------------------
+
+const PRIORITY_LABELS: Record<number, string> = {
+  1: "1st",
+  2: "2nd",
+  3: "3rd",
+  4: "4th",
+  5: "5th",
+  6: "6th",
+};
+
+const PRIORITY_TOOLTIPS: Record<number, string> = {
+  1: "Managed slot — organisation-wide policy, loaded first every session.",
+  2: "User-global slot — your personal config, loaded next.",
+  3: "Ancestor-walk slot — CLAUDE.md from each parent folder up to home.",
+  4: "Project slot — CLAUDE.md and rules inside this project.",
+  5: "Auto-memory slot — notes Claude wrote based on past corrections.",
+  6: "On-demand slot — files Claude reads only when relevant (paths-scoped rules, mentions).",
+};
+
+function priorityBadgeStyle(priority: number): React.CSSProperties {
+  const step = Math.min(Math.max(priority - 1, 0), 5);
+  const amberPct = 100 - step * 15;
+  const faintPct = step * 15;
+  const color = `color-mix(in srgb, var(--amber) ${amberPct}%, var(--paper-faint) ${faintPct}%)`;
+  const borderColor = `color-mix(in srgb, var(--amber) ${Math.max(amberPct - 30, 10)}%, var(--line) ${100 - Math.max(amberPct - 30, 10)}%)`;
+  return { color, borderColor };
+}
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
 
 interface Props {
   files: FileEntry[];
   orphanConfigs: OrphanConfigEntry[];
+  /** Map from file_id → priority (1–6) from the latest /api/simulate response. */
+  priorityMap?: Map<string, number>;
+  /** Latest simulate steps — used by CrossCwdPanel to identify cross-cwd files. */
+  steps?: TimelineStep[];
   /** Row hover → tell parent to highlight graph node + dim others. */
   onRowHover: (fileId: string | null) => void;
   /** Right-click on a tree row → parent builds ContextMenuTarget. */
@@ -62,6 +100,8 @@ interface Props {
 export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane({
   files,
   orphanConfigs,
+  priorityMap = new Map(),
+  steps = [],
   onRowHover,
   onRowContextMenu,
 }, ref) {
@@ -74,6 +114,12 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   const [query, setQuery] = useState("");
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
+  // NormalizeWizardModal opened on any drag-drop operation.
+  const [dndWizardEntry, setDndWizardEntry] = useState<{
+    sourceFile: FileEntry;
+    sourcePath: string;
+  } | null>(null);
+
   const home = useMemo(() => deriveHomeFromFiles(files), [files]);
 
   const orphanIds = useMemo(
@@ -81,13 +127,13 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     [orphanConfigs, files],
   );
 
+  // Build tree with priority ordering baked in (zones removed).
   const groups = useMemo(
-    () => buildExplorerTree(files, orphanIds, lastCwd),
-    [files, orphanIds, lastCwd],
+    () => buildExplorerTree(files, orphanIds, lastCwd, priorityMap),
+    [files, orphanIds, lastCwd, priorityMap],
   );
 
   // On first load, seed treeExpanded with the defaultOpen folders from the tree.
-  // We only seed folders that are not already tracked (so user's manual toggles win).
   useEffect(() => {
     if (groups.length === 0) return;
     const next = new Set(expanded);
@@ -114,7 +160,6 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     }
 
     if (changed) setTreeExpanded(next);
-  // Only run on initial groups build; subsequent calls rely on user interaction.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups]);
 
@@ -187,6 +232,17 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     }
   }
 
+  // Universal drop handler — every drop opens NormalizeWizardModal.
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const sourceFileId = e.dataTransfer.getData("application/x-observatory-file-id");
+    if (!sourceFileId) return;
+    const sourceFile = files.find((f) => f.id === sourceFileId);
+    if (!sourceFile) return;
+    setDndWizardEntry({ sourceFile, sourcePath: sourceFile.path });
+  }, [files]);
+
   function registerRef(id: string) {
     return (el: HTMLDivElement | null) => {
       if (el) rowRefs.current.set(id, el);
@@ -234,6 +290,17 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
       </div>
 
       <div className="explorer-pane-body" role="tree">
+        {/* Cross-cwd panel — files Claude reads for this folder that live outside it */}
+        {lastCwd && steps.length > 0 && (
+          <CrossCwdPanel
+            steps={steps}
+            files={files}
+            activeCwd={lastCwd}
+            home={home}
+            onSelect={(fileId) => select(fileId)}
+          />
+        )}
+
         {!hasAnyMatch && (
           <div className="explorer-empty">No files match</div>
         )}
@@ -254,9 +321,25 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
             onRowContextMenu={handleRowContextMenu}
             orphanIds={orphanIds}
             registerRef={registerRef}
+            priorityMap={priorityMap}
+            onZoneDrop={handleDrop}
           />
         ))}
       </div>
+
+      {dndWizardEntry && (
+        <NormalizeWizardModal
+          entry={{
+            file_path: dndWizardEntry.sourcePath,
+            slot: "",
+            canonical_path: "",
+            reason: "outside_canonical_dir",
+          }}
+          forcedMode={"rule" as NormalizeMode}
+          targetCwd={lastCwd ?? undefined}
+          onClose={() => setDndWizardEntry(null)}
+        />
+      )}
     </aside>
   );
 });
@@ -280,6 +363,8 @@ interface GroupRowProps {
   onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
+  priorityMap: Map<string, number>;
+  onZoneDrop: (e: React.DragEvent) => void;
 }
 
 function GroupRow({
@@ -297,49 +382,60 @@ function GroupRow({
   onRowContextMenu,
   orphanIds,
   registerRef,
+  priorityMap,
+  onZoneDrop,
 }: GroupRowProps) {
   if (query && group.children.length > 0 && !folderHasMatch(group.children)) return null;
 
   const isOpen = expanded.has(group.id);
   const isEmpty = group.children.length === 0;
-  const isProjectZone = group.id === "project";
+
+  const [isDragOver, setIsDragOver] = useState(false);
 
   return (
-    <div className="explorer-group" role="treeitem" aria-expanded={isOpen}>
+    <div
+      className={`explorer-group${isDragOver ? " drag-over" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+      onDragLeave={(e) => {
+        if (!(e.currentTarget as Node).contains(e.relatedTarget as Node)) {
+          setIsDragOver(false);
+        }
+      }}
+      onDrop={(e) => { setIsDragOver(false); onZoneDrop(e); }}
+    >
       <button
         className="explorer-group-head"
-        onClick={() => toggle(group.id)}
-        aria-label={`${isOpen ? "Collapse" : "Expand"} ${group.label}`}
+        onClick={() => !isEmpty && toggle(group.id)}
+        aria-expanded={isOpen}
+        disabled={isEmpty}
       >
-        <span className="explorer-group-chev">{isOpen ? "▾" : "▸"}</span>
-        <span className="explorer-group-label upper">{group.label}</span>
+        <span className="explorer-group-chev">
+          {!isEmpty && (isOpen ? "▾" : "▸")}
+        </span>
+        <span className="explorer-group-label">{group.label}</span>
         <span className="explorer-group-count">{group.count}</span>
       </button>
-      {isOpen && (
+      {isOpen && !isEmpty && (
         <div className="explorer-group-body">
-          {isEmpty && isProjectZone ? (
-            <div className="explorer-empty explorer-empty-zone">
-              No files Observatory tracks for this folder yet.
-            </div>
-          ) : (
-            <ItemList
-              items={group.children}
-              depth={0}
-              expanded={expanded}
-              toggle={toggle}
-              selectedId={selectedId}
-              query={query}
-              matchesSearch={matchesSearch}
-              folderHasMatch={folderHasMatch}
-              onRowClick={onRowClick}
-              onRowDblClick={onRowDblClick}
-              onRowMouseEnter={onRowMouseEnter}
-              onRowMouseLeave={onRowMouseLeave}
-              onRowContextMenu={onRowContextMenu}
-              orphanIds={orphanIds}
-              registerRef={registerRef}
-            />
-          )}
+          <ItemList
+            items={group.children}
+            depth={0}
+            expanded={expanded}
+            toggle={toggle}
+            selectedId={selectedId}
+            query={query}
+            matchesSearch={matchesSearch}
+            folderHasMatch={folderHasMatch}
+            onRowClick={onRowClick}
+            onRowDblClick={onRowDblClick}
+            onRowMouseEnter={onRowMouseEnter}
+            onRowMouseLeave={onRowMouseLeave}
+            onRowContextMenu={onRowContextMenu}
+            orphanIds={orphanIds}
+            registerRef={registerRef}
+            priorityMap={priorityMap}
+            groupId={group.id}
+          />
         </div>
       )}
     </div>
@@ -362,6 +458,8 @@ interface ItemListProps {
   onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
+  priorityMap: Map<string, number>;
+  groupId: string;
 }
 
 function ItemList(props: ItemListProps) {
@@ -381,6 +479,8 @@ function ItemList(props: ItemListProps) {
     onRowContextMenu,
     orphanIds,
     registerRef,
+    priorityMap,
+    groupId,
   } = props;
 
   return (
@@ -395,6 +495,8 @@ function ItemList(props: ItemListProps) {
               depth={depth}
               isSelected={item.id === selectedId}
               isOrphan={orphanIds.has(item.id)}
+              priority={priorityMap.get(item.id)}
+              groupId={groupId}
               onRowClick={onRowClick}
               onRowDblClick={onRowDblClick}
               onRowMouseEnter={onRowMouseEnter}
@@ -405,8 +507,6 @@ function ItemList(props: ItemListProps) {
           );
         } else {
           if (query && !folderHasMatch(item.children)) return null;
-          // In search mode force-expand all folders; otherwise respect expanded set
-          // but also honour the folder's defaultOpen on first render
           const autoExpand = query ? true : expanded.has(item.id);
           return (
             <FolderRow
@@ -427,6 +527,8 @@ function ItemList(props: ItemListProps) {
               onRowContextMenu={onRowContextMenu}
               orphanIds={orphanIds}
               registerRef={registerRef}
+              priorityMap={priorityMap}
+              groupId={groupId}
             />
           );
         }
@@ -452,6 +554,8 @@ interface FolderRowProps {
   onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
+  priorityMap: Map<string, number>;
+  groupId: string;
 }
 
 function FolderRow({
@@ -471,16 +575,27 @@ function FolderRow({
   onRowContextMenu,
   orphanIds,
   registerRef,
+  priorityMap,
+  groupId,
 }: FolderRowProps) {
   const indent = 24 + depth * 14;
   const childCount = countChildFiles(folder.children);
+  const [isDragOver, setIsDragOver] = useState(false);
+
   return (
     <div role="treeitem" aria-expanded={isOpen}>
       <button
-        className="explorer-folder-row"
+        className={`explorer-folder-row${isDragOver ? " drag-over" : ""}`}
         style={{ paddingLeft: indent }}
         onClick={() => toggle(folder.id)}
         title={folder.fullPath}
+        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragOver(false);
+        }}
       >
         <span className="explorer-row-chev">{isOpen ? "▾" : "▸"}</span>
         <span className="explorer-folder-icon">
@@ -510,6 +625,8 @@ function FolderRow({
           onRowContextMenu={onRowContextMenu}
           orphanIds={orphanIds}
           registerRef={registerRef}
+          priorityMap={priorityMap}
+          groupId={groupId}
         />
       )}
     </div>
@@ -530,6 +647,8 @@ interface FileRowProps {
   depth: number;
   isSelected: boolean;
   isOrphan: boolean;
+  priority?: number;
+  groupId: string;
   onRowClick: (f: FileEntry) => void;
   onRowDblClick: (f: FileEntry) => void;
   onRowMouseEnter: (id: string) => void;
@@ -543,6 +662,8 @@ function FileRow({
   depth,
   isSelected,
   isOrphan,
+  priority,
+  groupId,
   onRowClick,
   onRowDblClick,
   onRowMouseEnter,
@@ -564,6 +685,18 @@ function FileRow({
     ? autoloadState === "on"
     : node.file.paths_status !== "missing";
 
+  // All files are draggable — the drop handler (NormalizeWizardModal) handles
+  // consequences including read-only / plugin-managed implications.
+  function handleDragStart(e: React.DragEvent) {
+    e.dataTransfer.setData("application/x-observatory-file-id", node.id);
+    e.dataTransfer.setData("application/x-observatory-group-id", groupId);
+    e.dataTransfer.effectAllowed = "move";
+  }
+
+  const showBadge = priority !== undefined && priority >= 1 && priority <= 6;
+  const badgeLabel = priority !== undefined ? (PRIORITY_LABELS[priority] ?? null) : null;
+  const badgeTooltip = priority !== undefined ? (PRIORITY_TOOLTIPS[priority] ?? null) : null;
+
   return (
     <div
       ref={registerRef(node.id)}
@@ -571,6 +704,8 @@ function FileRow({
       className={`explorer-row${isSelected ? " selected" : ""}`}
       data-file-id={node.id}
       style={{ paddingLeft: indent }}
+      draggable
+      onDragStart={handleDragStart}
       onClick={() => onRowClick(node.file)}
       onDoubleClick={() => onRowDblClick(node.file)}
       onMouseEnter={() => onRowMouseEnter(node.id)}
@@ -600,6 +735,19 @@ function FileRow({
         )}
       </span>
 
+      {showBadge && badgeLabel ? (
+        <span
+          className="explorer-priority-badge"
+          style={priorityBadgeStyle(priority!)}
+          title={badgeTooltip ?? undefined}
+          aria-label={`Load priority: ${badgeLabel}`}
+        >
+          {badgeLabel}
+        </span>
+      ) : (
+        <span aria-hidden />
+      )}
+
       <span className="explorer-row-name">
         {node.display}
       </span>
@@ -617,7 +765,7 @@ function FileRow({
       {alwaysLoaded ? (
         <span
           className="explorer-autoload always"
-          title={typeof node.file.autoload_state === "string" ? "Always loaded — cannot be disabled through Observatory" : "Always loaded"}
+          title="Always loaded — cannot be disabled through Observatory"
           aria-label="Always loaded"
         />
       ) : (

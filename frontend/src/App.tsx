@@ -7,7 +7,6 @@ import { Toast } from "./components/Toast";
 import { useStore } from "./state/store";
 import { applyInternalFilter } from "./state/visibility";
 import { MapView } from "./views/MapView";
-import { SimulatorView } from "./views/SimulatorView";
 import { EditorView } from "./views/EditorView";
 import { ExtensionsView } from "./views/ExtensionsView";
 
@@ -59,13 +58,11 @@ export default function App() {
         watcherLive
       />
       {view === "map" && <MapView />}
-      {view === "sim" && <SimulatorView />}
       {view === "ed" && <EditorView />}
       {view === "ext" && <ExtensionsView />}
       {/* Phase 2 write-pipeline UI primitives. Mounted globally so any view
-          (Map, Simulator, Extensions, Editor) can call `useWritePipeline()`
-          without owning the modal/chip/toast machinery. Inert until a
-          `writeIntent` or `toasts[]` entry is staged. */}
+          can call `useWritePipeline()` without owning the modal/chip/toast
+          machinery. Inert until a `writeIntent` or `toasts[]` entry is staged. */}
       <DiffModal />
       <PreviewChip />
       <Toast />

@@ -9,12 +9,15 @@ import { PinOverlay } from "../components/PinOverlay";
 import { EdgeInfo } from "../components/EdgeInfo";
 import { EditorPanel } from "../components/EditorPanel";
 import { ContextMenu } from "../components/ContextMenu";
+import { MigrationVerifiedCard } from "../components/MigrationVerifiedCard";
 import { ErrorBoundary, EditorBoundary } from "../components/ErrorBoundary";
 import type { ContextMenuTarget } from "../components/ContextMenu";
-import { fetchCwds, fetchNonCanonical, fetchSimulate } from "../api/client";
+import { fetchCwds, fetchNonCanonical, fetchSimulate, fetchTier2Status } from "../api/client";
+import type { Tier2Status } from "../api/client";
 import { useStore, EXPLORER_WIDTH_MIN, EXPLORER_WIDTH_MAX } from "../state/store";
+import { useWritePipeline } from "../hooks/useWritePipeline";
 import { applyInternalFilter } from "../state/visibility";
-import type { Edge, FileEntry, LoadStatus, OrphanConfigEntry } from "../types";
+import type { Edge, FileEntry, LoadStatus, OrphanConfigEntry, TimelineStep } from "../types";
 
 export function MapView() {
   const files = useStore((s) => s.files);
@@ -27,7 +30,23 @@ export function MapView() {
   const [cy, setCy] = useState<cytoscape.Core | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<Edge | null>(null);
   const [statusMap, setStatusMap] = useState<Map<string, LoadStatus> | null>(null);
+  const [priorityMap, setPriorityMap] = useState<Map<string, number>>(new Map());
+  const [simulateSteps, setSimulateSteps] = useState<TimelineStep[]>([]);
   const [orphanConfigs, setOrphanConfigs] = useState<OrphanConfigEntry[]>([]);
+
+  // Tier 2 banner — migrated from removed SimulatorView.
+  const [tier2Status, setTier2Status] = useState<Tier2Status | null>(null);
+  const [tier2BannerDismissed, setTier2BannerDismissed] = useState(
+    () => localStorage.getItem("observatory_tier2_banner_dismissed") === "1",
+  );
+  const dismissTier2Banner = () => {
+    localStorage.setItem("observatory_tier2_banner_dismissed", "1");
+    setTier2BannerDismissed(true);
+  };
+  const { confirmStagedPreview } = useWritePipeline();
+
+  // Migration verified card — remount to re-read localStorage after navigating back to Map.
+  const [migrationCardKey] = useState(0);
 
   // Ref to the ExplorerPane DOM — used to apply .graph-hovered to rows
   // when the graph emits obs:graph-hover-node events.
@@ -68,6 +87,29 @@ export function MapView() {
     cy.resize();
   }, [cy, explorerWidth]);
 
+  // Tier 2 status — fetched once on mount.
+  useEffect(() => {
+    fetchTier2Status().then(setTier2Status).catch(() => {});
+  }, []);
+
+  const enableTier2 = useCallback(async () => {
+    const settingsEntry = files.find(
+      (f) => f.kind === "settings" && f.display.endsWith("settings.json") && !f.display.endsWith("settings.local.json"),
+    );
+    if (!settingsEntry) return;
+    try {
+      const previewRes = await fetch("/api/tier2-install-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!previewRes.ok) return;
+      const preview = await previewRes.json() as { confirm_token: string; diff: string; base_hash: string; is_creation: boolean };
+      const result = await confirmStagedPreview(settingsEntry.path, preview);
+      if (result.ok) fetchTier2Status().then(setTier2Status).catch(() => {});
+    } catch { /* Errors surface via Toast from confirmStagedPreview */ }
+  }, [files, confirmStagedPreview]);
+
   // Auto-pick the first available cwd when none is set so the status overlay
   // and explorer show real content on first load.
   useEffect(() => {
@@ -90,6 +132,7 @@ export function MapView() {
   useEffect(() => {
     if (!lastCwd) {
       setStatusMap(null);
+      setSimulateSteps([]);
       return;
     }
     let cancelled = false;
@@ -97,13 +140,19 @@ export function MapView() {
       .then((res) => {
         if (cancelled) return;
         const map = new Map<string, LoadStatus>();
+        const pmap = new Map<string, number>();
         for (const step of res.steps) {
-          if (step.file_id) map.set(step.file_id, step.status);
+          if (step.file_id) {
+            map.set(step.file_id, step.status);
+            if (step.priority !== undefined) pmap.set(step.file_id, step.priority);
+          }
         }
         for (const f of files) {
           if (!map.has(f.id)) map.set(f.id, "orphan");
         }
         setStatusMap(map);
+        setPriorityMap(pmap);
+        setSimulateSteps(res.steps);
       })
       .catch((e) => {
         console.warn("[observatory] /api/simulate failed", e);
@@ -242,6 +291,8 @@ export function MapView() {
         <ExplorerPane
           files={visibleFiles}
           orphanConfigs={orphanConfigs}
+          priorityMap={priorityMap}
+          steps={simulateSteps}
           onRowHover={handleRowHover}
           onRowContextMenu={handleExplorerContextMenu}
           ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
@@ -261,6 +312,43 @@ export function MapView() {
         className="map-canvas-area"
         onContextMenu={handleContextMenu}
       >
+        {/* Tier 2 live-verify banner — migrated from SimulatorView. */}
+        {tier2Status !== null && (
+          tier2Status.available ? (
+            <div className="map-tier2-banner map-tier2-banner--active">
+              <span>Live verification active — {tier2Status.events_captured} load events captured.</span>
+            </div>
+          ) : !tier2BannerDismissed && (
+            <div className="map-tier2-banner">
+              <span className="map-tier2-banner-text">
+                {tier2Status.preflight.ok
+                  ? "Live verification off. Enable to see which files Claude actually loads each session."
+                  : `Live verification blocked: ${tier2Status.reason}`}
+              </span>
+              {tier2Status.preflight.ok && (
+                <button
+                  type="button"
+                  className="map-tier2-enable"
+                  onClick={enableTier2}
+                >
+                  Enable
+                </button>
+              )}
+              <button
+                type="button"
+                className="map-tier2-dismiss"
+                onClick={dismissTier2Banner}
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+          )
+        )}
+
+        {/* Migration-verified card — shown after a successful file move. */}
+        <MigrationVerifiedCard key={migrationCardKey} activeCwd={lastCwd} />
+
         {/* EditorPanel slides in from the left edge of the canvas area. */}
         <EditorBoundary>
           <EditorPanel files={visibleFiles} />

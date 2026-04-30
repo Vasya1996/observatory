@@ -3898,6 +3898,66 @@ body {
   width: calc(100% - 480px - 360px);
 }
 
+/* ---------- Map-level tier2 banner (migrated from SimulatorView) ---------- */
+
+.map-tier2-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: rgba(17, 17, 22, 0.88);
+  border-bottom: 1px solid var(--line);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-dim);
+  backdrop-filter: blur(8px);
+}
+
+.map-tier2-banner--active {
+  border-bottom-color: rgba(93, 163, 154, 0.4);
+  color: var(--teal);
+}
+
+.map-tier2-banner-text {
+  flex: 1;
+}
+
+.map-tier2-enable {
+  appearance: none;
+  border: 1px solid var(--teal);
+  background: transparent;
+  color: var(--teal);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms;
+}
+.map-tier2-enable:hover {
+  background: rgba(93, 163, 154, 0.12);
+}
+
+.map-tier2-dismiss {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--paper-faint);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 100ms;
+}
+.map-tier2-dismiss:hover { color: var(--paper); }
+
 /* ---------- explorer header ---------- */
 .explorer-pane-header {
   padding: 24px 0 0 0;
@@ -4093,7 +4153,7 @@ body {
 /* ---------- file rows (matches mockup .node) ---------- */
 .explorer-row {
   display: grid;
-  grid-template-columns: 14px 1fr auto auto;
+  grid-template-columns: 14px auto 1fr auto auto;
   align-items: center;
   gap: 8px;
   padding-right: 14px;
@@ -4214,4 +4274,153 @@ body {
 .explorer-autoload.pending {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ---------- priority badge (Phase 4 extension) ----------
+   Sits between the kind icon and the filename. Shows Claude's official
+   load-order slot for the file: 1st (Managed) … 6th (On-demand).
+   Badge brightness degrades across 6 tiers via color-mix(amber → paper-faint)
+   so the most important files read amber and the least important read grey.
+   Shape reuses .badge from the mockup: border-radius 3px, 1px border, 2px 6px pad.
+   Off-chain files (priority 7 or absent) render no badge.
+*/
+.explorer-priority-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid;
+  flex-shrink: 0;
+  white-space: nowrap;
+  cursor: default;
+  line-height: 1;
+}
+
+/* Drag-and-drop affordances — every file is draggable (Phase 4 final wave).
+   The drop handler (NormalizeWizardModal) describes all consequences.
+   No not-allowed cursor — lifting restrictions per locked task. */
+.explorer-row {
+  cursor: grab;
+}
+.explorer-row:active {
+  cursor: grabbing;
+}
+.explorer-row.drag-over,
+.explorer-folder-row.drag-over,
+.explorer-group.drag-over > .explorer-group-head {
+  outline: 1px solid rgba(240, 168, 58, 0.45);
+  outline-offset: -1px;
+  background: rgba(240, 168, 58, 0.06);
+}
+
+/* ---------- cross-cwd panel ---------- */
+
+.cross-cwd-panel {
+  margin: 0 0 0 0;
+  background: rgba(17, 17, 22, 0.55);
+  border-bottom: none;
+}
+
+.cross-cwd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 24px 8px 24px;
+  gap: 8px;
+}
+
+.cross-cwd-header-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+}
+
+.cross-cwd-header-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+}
+
+.cross-cwd-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 2px 0;
+}
+
+.cross-cwd-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 20px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px 5px 24px;
+  cursor: pointer;
+  transition: background 110ms;
+  border-left: 2px solid transparent;
+}
+
+.cross-cwd-row:hover {
+  background: rgba(232, 228, 216, 0.03);
+}
+
+.cross-cwd-row:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: -2px;
+}
+
+.cross-cwd-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid;
+  text-align: center;
+  white-space: nowrap;
+  cursor: help;
+  user-select: none;
+}
+
+.cross-cwd-path {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cross-cwd-why-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--paper-faint);
+  cursor: help;
+  flex-shrink: 0;
+  transition: color 110ms, border-color 110ms;
+  user-select: none;
+}
+
+.cross-cwd-row:hover .cross-cwd-why-icon {
+  color: var(--paper-dim);
+  border-color: var(--paper-faint);
+}
+
+.cross-cwd-divider {
+  height: 1px;
+  margin: 8px 0 4px 0;
+  background: var(--line);
 }

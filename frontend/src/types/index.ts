@@ -15,9 +15,7 @@ export type FileKind =
 
 export type EdgeKind = "import" | "mention" | "hook";
 
-export type ViewKey = "map" | "sim" | "ed" | "ext";
-
-export type SimulatorMode = "per-cwd" | "all-cwds";
+export type ViewKey = "map" | "ed" | "ext";
 
 export interface Issue {
   severity: "info" | "warning" | "error";
@@ -95,6 +93,10 @@ export interface TimelineStep {
   status: TimelineStatus;
   matched_on?: string | null;
   reason?: string | null;
+  // Phase 4 enrichment: Claude's official 6-slot load-order priority.
+  // 1=Managed, 2=User-global, 3=Ancestor-walk, 4=Project, 5=Auto-memory, 6=On-demand.
+  // Defaults to 6 when absent (older backend) so the badge just doesn't render.
+  priority?: number;
 }
 
 export interface SimulatorStats {
@@ -113,15 +115,13 @@ export interface SimulatorResponse {
 export interface UiState {
   pins: Record<string, { x: number; y: number }>;
   last_cwd: string | null;
-  last_view: ViewKey | null;
+  last_view: string | null;
   show_internal?: boolean;
   inspector_open?: boolean;
-  simulator_mode?: SimulatorMode;
   editor_open?: boolean;
   // Phase 4: explorer tree expanded folder ids. Empty = default open logic applied.
   tree_expanded?: string[];
   // Phase 4: explorer column width in px. Default 320; range 240–480.
-  // Backend agent adds this field; absent in older .state.json payloads → fallback 320.
   tree_width?: number;
 }
 

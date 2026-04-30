@@ -12,9 +12,8 @@ interface Props {
 
 const TABS: { key: ViewKey; num: string; label: string }[] = [
   { key: "map", num: "01", label: "Map" },
-  { key: "sim", num: "02", label: "Simulator" },
-  { key: "ed",  num: "03", label: "Editor" },
-  { key: "ext", num: "04", label: "Extensions" },
+  { key: "ed",  num: "02", label: "Editor" },
+  { key: "ext", num: "03", label: "Extensions" },
 ];
 
 export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
@@ -22,8 +21,6 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
   const setView = useStore((s) => s.setView);
   const showInternal = useStore((s) => s.showInternal);
   const setShowInternal = useStore((s) => s.setShowInternal);
-  const simulatorMode = useStore((s) => s.simulatorMode);
-  const setSimulatorMode = useStore((s) => s.setSimulatorMode);
   const pushToast = useStore((s) => s.pushToast);
 
   const { requestWrite } = useWritePipeline();
@@ -141,30 +138,6 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
               {t.label}
             </button>
           ))}
-          {view === "sim" && (
-            <span className="subtabs" role="tablist" aria-label="Simulator mode">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={simulatorMode === "per-cwd"}
-                className={`subtab${simulatorMode === "per-cwd" ? " on" : ""}`}
-                onClick={() => setSimulatorMode("per-cwd")}
-                title="Show which files Claude loads for the selected folder"
-              >
-                <span className="num">02a</span>This folder
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={simulatorMode === "all-cwds"}
-                className={`subtab${simulatorMode === "all-cwds" ? " on" : ""}`}
-                onClick={() => setSimulatorMode("all-cwds")}
-                title="See a summary across all discovered folders at once"
-              >
-                <span className="num">02b</span>All folders
-              </button>
-            </span>
-          )}
         </nav>
 
         <div className="status">
