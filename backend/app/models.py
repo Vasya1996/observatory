@@ -302,6 +302,10 @@ class NonCanonicalEntry(BaseModel):
         "loaded_via_at_import",
         "outside_canonical_dir",
         "wrong_filename_at_canonical_path",
+        # Drift fix #2: ~/.claude/CLAUDE.local.md exists but is not documented
+        # by Claude Code as a valid user-global file.  Surface it, not silently
+        # skip it.  FE shows a "non-standard / undocumented" badge.
+        "non_standard_user_local",
     ]
     importer_path: Optional[str] = None  # set when reason == loaded_via_at_import
     importer_line: Optional[int] = None
@@ -340,6 +344,18 @@ class MigratePreviewRequest(BaseModel):
     target_cwd: Optional[str] = None
 
 
+class GlobChange(BaseModel):
+    """A proposed rewrite of one paths: glob when a rule file is moved.
+
+    Included in MigratePlan.glob_changes for every rule move that has
+    paths: frontmatter pointing to the source project.  The confirmation
+    modal displays these so the user sees exactly what globs will change.
+    """
+    original_glob: str
+    proposed_glob: str
+    reason: str   # plain-language explanation, e.g. "project root changed"
+
+
 class MigratePreviewResponse(BaseModel):
     tokens: list[str]          # one confirm_token per affected file (same shape as /api/preview)
     migration_id: str          # batch id used for rollback tracking
@@ -352,6 +368,9 @@ class MigratePlan(BaseModel):
     content_identity: Literal["exact", "substring", "fail"]
     orphan_importers: list[ImportRef] = Field(default_factory=list)
     heading_collisions: list[str] = Field(default_factory=list)
+    # Glob rewrites when a paths:-scoped rule is moved between projects.
+    # Empty list when no globs are affected (non-rule moves or unscoped rules).
+    glob_changes: list[GlobChange] = Field(default_factory=list)
 
 
 # Needed for forward-reference resolution.

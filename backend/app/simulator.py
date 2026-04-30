@@ -17,9 +17,19 @@ mirrors Claude Code's actual behaviour:
 
 Step 5 is what makes the simulator work for any user: we don't hardcode
 `~/CLAUDE.md`, we discover it as the ancestor walk ascends.
+
+claudeMdExcludes (drift fix #4): before classification, any file whose absolute
+path matches a glob in the merged claudeMdExcludes array from any of the four
+settings scopes (managed > local > project > user) is dropped from the load
+chain.  Managed CLAUDE.md is always exempt from exclusion.
+
+@-import tier inheritance (drift fix #5): imported files inherit their parent's
+priority when the parent is a session-start file (tiers 1-5).  Only on-demand
+parents produce on-demand imports.
 """
 from __future__ import annotations
 
+import json
 import os
 from collections import deque
 from pathlib import Path
@@ -50,6 +60,67 @@ _SLOT_PRIORITY: dict[str, int] = {
     SLOT_AUTO_MEMORY: 5,
     SLOT_ON_DEMAND: 6,
 }
+
+
+def _read_json_settings(path: Path) -> dict:
+    """Read a JSON settings file, returning {} on any error."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+
+
+def _read_claude_md_excludes(cwd: Path) -> list[str]:
+    """Return the merged claudeMdExcludes glob list from all four settings scopes.
+
+    Precedence per the researcher's reference (settings.md): managed > local
+    > project > user.  Arrays merge across layers (all exclusions apply).
+    Managed CLAUDE.md is never excludable regardless of what any layer says —
+    callers must enforce that carve-out separately.
+
+    Settings files read (in merge order — all contribute, no override):
+      1. Managed: OS-level managed settings (not a standard JSON file — skipped
+         if absent; the managed CLAUDE.md itself is exempt, not the settings).
+      2. User: ~/.claude/settings.json
+      3. User-local: ~/.claude/settings.local.json
+      4. Project: <cwd>/.claude/settings.json
+    """
+    excludes: list[str] = []
+    claude_dir = config.CLAUDE_DIR
+    settings_files = [
+        claude_dir / "settings.json",
+        claude_dir / "settings.local.json",
+        cwd / ".claude" / "settings.json",
+    ]
+    for sf in settings_files:
+        if not sf.is_file():
+            continue
+        data = _read_json_settings(sf)
+        raw = data.get("claudeMdExcludes", [])
+        if isinstance(raw, list):
+            excludes.extend(str(g) for g in raw if g)
+        elif isinstance(raw, str) and raw:
+            excludes.append(raw)
+    return excludes
+
+
+def _path_matches_glob_list(path: Path, globs: list[str]) -> bool:
+    """Return True if the absolute path matches any glob in the list.
+
+    Patterns match against absolute paths per the claudeMdExcludes spec.
+    Uses pathspec gitwildmatch for ** support.
+    """
+    if not globs:
+        return False
+    path_str = str(path)
+    for glob in globs:
+        try:
+            spec = pathspec.PathSpec.from_lines("gitwildmatch", [glob])
+            if spec.match_file(path_str):
+                return True
+        except Exception:
+            continue
+    return False
 
 # Tokens-per-line placeholder. Real Claude Code tokens-per-line is ~10-15
 # depending on content; 12 is a workable midpoint. This is a rough estimate
@@ -155,20 +226,54 @@ def simulate(
     by_id: dict[str, FileEntry] = {f.id: f for f in files}
     by_path: dict[str, FileEntry] = {f.path: f for f in files}
 
+    # Drift fix #4: read claudeMdExcludes from all four settings scopes.
+    # Managed CLAUDE.md is exempt — never excluded regardless of globs.
+    managed_path = config.os_managed_claude_md_path()
+    exclude_globs = _read_claude_md_excludes(cwd)
+
+    def _is_excluded(file: FileEntry) -> bool:
+        """True if the file's absolute path matches any claudeMdExcludes glob.
+        Managed CLAUDE.md is always exempt from exclusion.
+        """
+        if not exclude_globs:
+            return False
+        fp = Path(file.path)
+        try:
+            if fp.resolve() == managed_path.resolve():
+                return False
+        except OSError:
+            pass
+        return _path_matches_glob_list(fp, exclude_globs)
+
     loaded_ids: set[str] = set()
+    # Drift fix #5: track the priority inherited from each importer so @-imported
+    # files inherit their parent's tier (not unconditionally assigned on-demand).
+    # Maps file_id -> parent priority (only set when reached via @-import BFS).
+    _import_parent_priority: dict[str, int] = {}
     steps: list[TimelineStep] = []
     conditional_count = 0
 
-    def _push(file: FileEntry, status: str, matched_on: str | None, reason: str | None):
+    def _push(
+        file: FileEntry,
+        status: str,
+        matched_on: str | None,
+        reason: str | None,
+        parent_priority: int | None = None,
+    ) -> None:
         nonlocal conditional_count
         slot, is_canonical, _, _ = classify_step(
             file.path, matched_on, status, cwd, kind=file.kind
         )
-        # conditional = paths: globs present but didn't match this cwd → on-demand for
-        # this session.  skipped = mention-reachable only → always on-demand.  Both
-        # map to priority 6 regardless of where the file lives on disk.
+        # conditional = paths: globs present but didn't match this cwd → on-demand.
+        # skipped = mention-reachable only → always on-demand.
         if status in ("conditional", "skipped"):
             priority = _SLOT_PRIORITY[SLOT_ON_DEMAND]
+        elif matched_on == "@import" and parent_priority is not None:
+            # Drift fix #5: @-imported files inherit the parent's tier when the
+            # parent is session-start (tiers 1-5).  Only on-demand parents
+            # (priority 6) produce on-demand imports.
+            slot_priority = _SLOT_PRIORITY.get(slot, 6)
+            priority = parent_priority if parent_priority < 6 else slot_priority
         else:
             priority = _SLOT_PRIORITY.get(slot, 6)
         steps.append(
@@ -185,12 +290,13 @@ def simulate(
         )
         if status == "loaded":
             loaded_ids.add(file.id)
+            _import_parent_priority[file.id] = priority
         elif status == "conditional":
             conditional_count += 1
 
     # 1. ~/.claude/CLAUDE.md
     user_global = by_path.get(str(config.CLAUDE_DIR / "CLAUDE.md"))
-    if user_global:
+    if user_global and not _is_excluded(user_global):
         _push(user_global, "loaded", "user-global", "Always loaded at session start")
 
     # 2 + 3. Global rules at ~/.claude/rules/
@@ -198,6 +304,8 @@ def simulate(
         if f.kind != "rule":
             continue
         if not str(f.path).startswith(str(config.CLAUDE_DIR / "rules")):
+            continue
+        if _is_excluded(f):
             continue
         if not f.paths_globs:
             _push(f, "loaded", "no-paths", "Always loaded (no paths: filter)")
@@ -216,7 +324,7 @@ def simulate(
     # instruction file (it's NOT walked up the ancestor chain — only the
     # session cwd has one).
     project_team = by_path.get(str(cwd / ".claude" / "CLAUDE.md"))
-    if project_team and project_team.id not in loaded_ids:
+    if project_team and project_team.id not in loaded_ids and not _is_excluded(project_team):
         _push(project_team, "loaded", "project-team",
               f"Team-shared CLAUDE.md at {config.collapse_home(cwd / '.claude')}")
 
@@ -233,13 +341,13 @@ def simulate(
         seen_dirs.add(d)
         # CLAUDE.md at this level
         cm = by_path.get(str(d / "CLAUDE.md"))
-        if cm and cm.id not in loaded_ids:
+        if cm and cm.id not in loaded_ids and not _is_excluded(cm):
             _push(cm, "loaded", "ancestor-walk",
                   f"CLAUDE.md found at ancestor {config.collapse_home(d)}")
         # CLAUDE.local.md at this level (per docs: "локальные инструкции,
         # специфичные для проекта" — historically common on the spine).
         local_cm = by_path.get(str(d / "CLAUDE.local.md"))
-        if local_cm and local_cm.id not in loaded_ids:
+        if local_cm and local_cm.id not in loaded_ids and not _is_excluded(local_cm):
             _push(local_cm, "loaded", "ancestor-walk",
                   f"CLAUDE.local.md at {config.collapse_home(d)}")
         # .claude/rules/*.md at this level
@@ -253,6 +361,8 @@ def simulate(
                 continue
             # Skip the global rules dir — already handled above.
             if d == config.HOME and rp.parent == (config.CLAUDE_DIR / "rules"):
+                continue
+            if _is_excluded(f):
                 continue
             if not f.paths_globs:
                 if f.id not in loaded_ids:
@@ -273,19 +383,21 @@ def simulate(
     # these paths is skipped when --setting-sources excludes "local".
     for extra in extra_dirs:
         cm = by_path.get(str(extra / "CLAUDE.md"))
-        if cm and cm.id not in loaded_ids:
+        if cm and cm.id not in loaded_ids and not _is_excluded(cm):
             _push(cm, "loaded", "add-dir",
                   f"CLAUDE.md from --add-dir path {config.collapse_home(extra)}")
         if not skip_local_from_extra:
             local_cm = by_path.get(str(extra / "CLAUDE.local.md"))
-            if local_cm and local_cm.id not in loaded_ids:
+            if local_cm and local_cm.id not in loaded_ids and not _is_excluded(local_cm):
                 _push(local_cm, "loaded", "add-dir",
                       f"CLAUDE.local.md from --add-dir path {config.collapse_home(extra)}")
 
     # 6. Transitive @-imports.
+    # Drift fix #5: pass the parent's priority so imported files inherit tier.
     queue: deque[str] = deque(loaded_ids)
     while queue:
         src = queue.popleft()
+        src_priority = _import_parent_priority.get(src, 6)
         for e in edges:
             if e.kind != "import" or e.source != src:
                 continue
@@ -294,10 +406,13 @@ def simulate(
             tgt = by_id.get(e.target)
             if not tgt:
                 continue
+            if _is_excluded(tgt):
+                continue
             line_hint = f":{e.lines[0]}" if e.lines else ""
             _push(
                 tgt, "loaded", "@import",
                 f"Imported via @ from {by_id[src].display}{line_hint}",
+                parent_priority=src_priority,
             )
             queue.append(tgt.id)
 

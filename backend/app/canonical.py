@@ -146,16 +146,49 @@ def classify_step(
 
     # --- User-global slot ---
     is_user_global_claude_md = (fp == (claude_dir / "CLAUDE.md"))
+    # Drift fix #1: ~/.claude/CLAUDE.local.md — not documented by Claude Code
+    # as a user-global file (the doc only lists CLAUDE.local.md as project-local).
+    # Surface as user-global but mark non_standard=True so the FE can badge it.
+    is_user_global_claude_local = (fp == (claude_dir / "CLAUDE.local.md"))
+    # Drift fix #1 (paths-scoped): ~/.claude/rules/*.md WITHOUT paths: → user-global.
+    # ~/.claude/rules/*.md WITH paths: → on-demand (same as project rules with paths:).
+    # `paths_globs` isn't passed to classify_step, so we check by looking at
+    # `matched_on`: a conditional/paths-matched step has non-None matched_on that
+    # isn't "@import"/"user-global"/"no-paths". We gate on `status` via `matched_on`.
+    # The rule file's paths: presence must be passed from the caller — we use the
+    # convention that `matched_on == "no-paths"` means paths-less (always loaded),
+    # and any cwd-path string or None means paths-scoped.  Since classify_step
+    # is also called from find_orphan_configs and non-canonical endpoints (where
+    # matched_on may be None), we treat matched_on==None as "unknown" → still
+    # user-global (conservative). Only "conditional" or explicit cwd match strings
+    # demote to on-demand.  The key signal: if caller passes matched_on that
+    # looks like a glob match (non-None, not "no-paths", not "@import",
+    # not "user-global"), the file has paths: frontmatter → on-demand.
+    _paths_scoped_signal = (
+        matched_on is not None
+        and matched_on not in ("no-paths", "@import", "user-global", "ancestor-walk",
+                               "project-team", "add-dir")
+    )
     is_user_global_rule = (
         fp.suffix == ".md"
-        and fp.parent == (claude_dir / "rules")
+        and _is_under(fp, claude_dir / "rules")
     )
-    if is_user_global_claude_md or is_user_global_rule:
+    if is_user_global_claude_md:
         if matched_on == "@import":
-            # Loaded via @-import rather than by the normal user-global scan —
-            # still user-global files, but note the non-standard load path.
-            canonical = str(fp)
-            return SLOT_USER_GLOBAL, False, canonical, "loaded_via_at_import"
+            return SLOT_USER_GLOBAL, False, str(fp), "loaded_via_at_import"
+        return SLOT_USER_GLOBAL, True, str(fp), ""
+    if is_user_global_claude_local:
+        # Non-standard: the doc never defines ~/.claude/CLAUDE.local.md.
+        # Surface as user-global with non_standard flag encoded in reason.
+        if matched_on == "@import":
+            return SLOT_USER_GLOBAL, False, str(fp), "loaded_via_at_import"
+        return SLOT_USER_GLOBAL, False, str(fp), "non_standard_user_local"
+    if is_user_global_rule:
+        # Drift fix #1: paths:-scoped user-global rules → on-demand.
+        if _paths_scoped_signal:
+            return SLOT_ON_DEMAND, True, str(fp), ""
+        if matched_on == "@import":
+            return SLOT_USER_GLOBAL, False, str(fp), "loaded_via_at_import"
         return SLOT_USER_GLOBAL, True, str(fp), ""
 
     # --- Project slot ---
