@@ -212,11 +212,16 @@ export function GraphCanvas({
         {
           selector: "node",
           style: {
-            // Default fill is grey — kind-color is only applied via
-            // .status-loaded (locked rule #32 update 2026-04-30).
-            // Without a cwd all nodes are grey; with a cwd only loaded
-            // nodes re-acquire amber/paper.
-            "background-color": "#3a3a40",
+            // Base fill = kind-color via data(color). The data() mapper is
+            // resolved once at node construction; later class-driven overrides
+            // (status-conditional/skipped/orphan + no-cwd) flip the fill to
+            // grey. We reverse the original "default grey, restore via
+            // .status-loaded" because cytoscape did not re-resolve data(color)
+            // when the class was added post-construction (the bypass kept the
+            // grey value). With this scheme, only loaded nodes show their
+            // kind-color — exactly the "orange = autoloaded into active
+            // session" semantic from locked rule #32.
+            "background-color": "data(color)",
             "background-opacity": 1,
             width: "data(size)",
             height: "data(size)",
@@ -316,16 +321,25 @@ export function GraphCanvas({
         // Listed BEFORE `.dim` so hover-dim wins on conflict — cytoscape
         // applies later rules with higher priority.
         {
-          // Loaded nodes re-acquire their kind-color (amber/paper) from
-          // data(color). Default is grey (#3a3a40); this rule overrides it
-          // for the loaded set. Orange on map = autoloaded into active session.
+          // Loaded nodes keep their base kind-color (amber/paper from
+          // data(color)) and gain a thin paper border for "alive in this
+          // session" affordance. No background override here.
           selector: "node.status-loaded",
           style: {
-            "background-color": "data(color)",
             "border-width": 1.5,
             "border-color": C.paper,
             "border-style": "solid",
             color: C.paper,
+          },
+        },
+        {
+          // No cwd selected → all nodes grey (we can't say what's loaded
+          // without a target). Applied to every node in MapView's
+          // statusMap effect when statusMap is null.
+          selector: "node.no-cwd",
+          style: {
+            "background-color": "#3a3a40",
+            "border-width": 0,
           },
         },
         {
@@ -697,10 +711,40 @@ export function GraphCanvas({
       cy.nodes().forEach((n) => {
         if (n.data("kind") === "folder") return;
         n.removeClass(
-          "status-loaded status-conditional status-skipped status-orphan",
+          "status-loaded status-conditional status-skipped status-orphan no-cwd",
         );
+        // Clear ALL bypass styles before re-applying the next state. The
+        // single-property form `removeStyle("background-color")` is a
+        // no-op in this cytoscape build (empirically — verified through
+        // Chrome MCP). The unparameterised `removeStyle()` clears every
+        // bypass and lets the stylesheet rules + data() mappers resolve
+        // fresh.
+        n.removeStyle();
+
         const s = statusMap?.get(n.id());
-        if (s) n.addClass(`status-${s}`);
+        if (s) {
+          n.addClass(`status-${s}`);
+          // Bypass background for every state explicitly. We can't trust
+          // `removeStyle()` + base `data(color)` to take over because the
+          // bypass from the previous render persists across class
+          // transitions in this cytoscape build (verified through Chrome
+          // MCP: nodes briefly carrying skipped/orphan greys keep them
+          // even after status-loaded class is applied). Setting the
+          // bypass explicitly for every state guarantees the bypass
+          // matches the visible state.
+          if (s === "loaded") {
+            n.style("background-color", n.data("color"));
+          } else if (s === "conditional" || s === "skipped") {
+            n.style("background-color", "#3a3a40");
+          } else if (s === "orphan") {
+            n.style("background-color", "#1f1f24");
+          }
+        } else {
+          // null statusMap → no cwd selected → grey out every node so the
+          // user doesn't see misleading kind-colors that imply "loaded".
+          n.addClass("no-cwd");
+          n.style("background-color", "#3a3a40");
+        }
       });
     });
   }, [statusMap]);
