@@ -181,6 +181,12 @@ class UiState(BaseModel):
     # Whether the Editor side panel is currently open. Mirrors inspector_open
     # semantics: persisted so the panel state survives reloads.
     editor_open: bool = False
+    # Set of folder keys the Phase 4 file-explorer tree has expanded.
+    # Empty list = nothing expanded; the frontend applies its own default-open
+    # logic on first load (user-config + projects blocks) when this list is empty.
+    # Keys match the folder node ids the tree builder emits (typically the
+    # absolute directory path). Persisted so expand state survives reloads.
+    tree_expanded: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -445,3 +451,35 @@ class NonCanonicalWithSuppressResponse(BaseModel):
     # response. Computed once per request inside /api/non-canonical.
     orphan_configs: list[OrphanConfigEntry] = Field(default_factory=list)
     suppressed: bool
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — autoload toggle
+# ---------------------------------------------------------------------------
+
+AutoloadMechanism = Literal[
+    "paths_sentinel",       # rule: add/remove paths: [".DISABLED"] sentinel
+    "permissions_deny",     # skill: add/remove Skill() literal in settings.json
+    "mcp_disabled_key",     # mcp server: move entry between mcpServers / mcpServers_disabled
+    "comment_out_import",   # knowledge: comment/uncomment @-import line in parent CLAUDE.md
+    "memory_index_comment", # knowledge: comment/uncomment entry in MEMORY.md
+]
+
+
+class AutoloadToggleRequest(BaseModel):
+    path: str   # absolute path of the file whose autoload is being toggled
+    enabled: bool  # True = enable autoload, False = disable
+
+
+class AutoloadTogglePreviewResponse(BaseModel):
+    # When the kind supports toggling: same shape as PreviewResponse plus extra context.
+    toggle_applicable: bool
+    # Set when toggle_applicable is True.
+    confirm_token: Optional[str] = None
+    diff: Optional[str] = None
+    base_hash: Optional[str] = None
+    is_creation: bool = False
+    new_enabled: Optional[bool] = None
+    mechanism: Optional[AutoloadMechanism] = None
+    # Set when toggle_applicable is False.
+    reason: Optional[str] = None
