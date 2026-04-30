@@ -12,13 +12,170 @@ to call `build_index()` again on filesystem changes.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
+import yaml as _yaml
+
 from . import config, hooks, scanner
 from .models import Edge, FileEntry, FileKind, Issue, PathsStatus
 from .parser import ParsedFile, file_id, parse_json_only_metadata, parse_markdown
+
+# ---------------------------------------------------------------------------
+# Autoload-state helpers (read-side counterpart of api.py's toggle handlers).
+# Each returns "on" | "off" | "n/a" without mutating anything.
+# ---------------------------------------------------------------------------
+
+# Must stay in sync with api.py's _DISABLED_SENTINEL and _DISABLED_COMMENT_PREFIX.
+_DISABLED_SENTINEL = ".DISABLED"
+_DISABLED_COMMENT_PREFIX = "<!-- [disabled by Observatory] --> "
+
+# Kinds where "autoload" is not a meaningful concept.
+_AUTOLOAD_NA_KINDS: frozenset[FileKind] = frozenset({
+    "claude_md",
+    "automemory",
+    "settings",
+    "script",
+    "plugin_manifest",
+    "plugin_registry",
+    "memory_index",
+    "mcp",
+})
+
+
+def _autoload_state_rule(path: Path) -> str:
+    """Return "off" when the rule's paths: contains exactly the disabled sentinel."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "on"
+    if not text.startswith("---"):
+        return "on"
+    end = text.find("\n---", 3)
+    if end == -1:
+        return "on"
+    try:
+        fm = _yaml.safe_load(text[3:end].strip()) or {}
+    except _yaml.YAMLError:
+        return "on"
+    paths_val = fm.get("paths")
+    if isinstance(paths_val, list) and paths_val == [_DISABLED_SENTINEL]:
+        return "off"
+    return "on"
+
+
+def _autoload_state_skill(path: Path) -> str:
+    """Return "off" when Skill(<plugin>:<name> *) is in settings.json permissions.deny."""
+    settings_path = config.CLAUDE_DIR / "settings.json"
+    if not settings_path.is_file():
+        return "on"
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "on"
+    deny: list = data.get("permissions", {}).get("deny", [])
+    # Derive skill literal from SKILL.md frontmatter.
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "on"
+    if not text.startswith("---"):
+        return "on"
+    end = text.find("\n---", 3)
+    if end == -1:
+        return "on"
+    try:
+        fm = _yaml.safe_load(text[3:end].strip()) or {}
+    except _yaml.YAMLError:
+        return "on"
+    name = fm.get("name") if fm else None
+    if not name:
+        return "on"
+    plugin_id = path.parent.name
+    skill_literal = f"Skill({plugin_id}:{name} *)"
+    return "off" if skill_literal in deny else "on"
+
+
+def _autoload_state_memory(path: Path) -> str:
+    """Return "off" when the MEMORY.md line referencing this file is commented out.
+
+    Also checks @-import lines in CLAUDE.md files (comment_out_import mechanism).
+    Tries MEMORY.md first, then scans CLAUDE.md files for a commented-out import.
+    """
+    target_display = config.collapse_home(path)
+    target_basename = path.name
+
+    memory_index = config.CLAUDE_DIR / "knowledge" / "MEMORY.md"
+    if memory_index.is_file():
+        try:
+            content = memory_index.read_text(encoding="utf-8")
+        except OSError:
+            content = ""
+        for line in content.splitlines():
+            stripped = line.rstrip("\n")
+            if target_display in stripped or target_basename in stripped:
+                if stripped.lstrip().startswith(_DISABLED_COMMENT_PREFIX):
+                    return "off"
+                return "on"
+
+    # Not found in MEMORY.md — check for @-import in any CLAUDE.md or rule.
+    # Only look for the disabled (commented-out) case here; if the import is
+    # active we default "on" anyway.
+    import_patterns = [f"@{target_display}", f"@{str(path)}"]
+    for cwd in scanner.discover_cwds():
+        for candidate in [
+            cwd / "CLAUDE.md",
+            cwd / ".claude" / "CLAUDE.md",
+        ]:
+            if not candidate.is_file():
+                continue
+            try:
+                text = candidate.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for raw_line in text.splitlines():
+                stripped = raw_line.strip()
+                if stripped.startswith(_DISABLED_COMMENT_PREFIX):
+                    inner = stripped[len(_DISABLED_COMMENT_PREFIX):]
+                    for pat in import_patterns:
+                        if inner == pat or inner.startswith(pat + " "):
+                            return "off"
+
+    # Global CLAUDE.md
+    for global_md in [
+        config.HOME / "CLAUDE.md",
+        config.CLAUDE_DIR / "CLAUDE.md",
+    ]:
+        if not global_md.is_file():
+            continue
+        try:
+            text = global_md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
+            if stripped.startswith(_DISABLED_COMMENT_PREFIX):
+                inner = stripped[len(_DISABLED_COMMENT_PREFIX):]
+                for pat in import_patterns:
+                    if inner == pat or inner.startswith(pat + " "):
+                        return "off"
+
+    return "on"
+
+
+def compute_autoload_state(path: Path, kind: FileKind) -> str:
+    """Compute the autoload state for a single file entry during index build."""
+    if kind in _AUTOLOAD_NA_KINDS:
+        return "n/a"
+    if kind == "rule":
+        return _autoload_state_rule(path)
+    if kind == "skill":
+        return _autoload_state_skill(path)
+    if kind == "memory":
+        return _autoload_state_memory(path)
+    return "n/a"
 
 # Phase 2: kinds the user can edit through Observatory. Other kinds are
 # Claude-Code-managed (plugin manifests/registry, automemory) or are scripts
@@ -269,6 +426,7 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
                 display_name=p.display_name,
                 cached_versions=p.cached_versions,
                 writable=(p.kind in WRITABLE_KINDS) and not p.readonly,
+                autoload_state=compute_autoload_state(p.raw_path, p.kind),
             )
         )
 

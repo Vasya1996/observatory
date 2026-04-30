@@ -66,6 +66,11 @@ class FileEntry(BaseModel):
     # `.state.json` payloads (and any caller still on the previous schema) keep
     # parsing — `scanner` / `resolver` set the actual value per-kind.
     writable: bool = True
+    # Phase 4 autoload state — populated by resolver.build_index() using the
+    # same on-disk checks as the autoload-toggle handlers.  FE uses this as the
+    # single source of truth for the on/off pill in ExplorerPane rows (E5/E2).
+    # "n/a" for kinds where autoload toggling is not applicable.
+    autoload_state: Literal["on", "off", "n/a"] = "n/a"
 
 
 class Edge(BaseModel):
