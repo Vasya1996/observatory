@@ -98,6 +98,7 @@ function ciText(ci: string): string {
 
 export function NormalizeWizardModal({ entry, prefilledMode, forcedMode, pathsGlobs, targetCwd, onClose, onCommitted, activeCwd }: NormalizeWizardProps) {
   const pushToast = useStore((s) => s.pushToast);
+  const bumpDataVersion = useStore((s) => s.bumpDataVersion);
 
   const effectiveMode = forcedMode ?? prefilledMode;
   const [step, setStep] = useState<1 | 2>(effectiveMode ? 2 : 1);
@@ -158,6 +159,7 @@ export function NormalizeWizardModal({ entry, prefilledMode, forcedMode, pathsGl
       }
       await postMigrateFinalize(preview.migration_id, "commit");
       pushToast({ kind: "success", message: "File moved successfully." });
+      bumpDataVersion();
       if (onCommitted) {
         const sd = preview.plan.sim_diff;
         onCommitted({
@@ -185,7 +187,7 @@ export function NormalizeWizardModal({ entry, prefilledMode, forcedMode, pathsGl
     } finally {
       setApplying(false);
     }
-  }, [preview, pushToast, onClose, onCommitted, entry.file_path, activeCwd]);
+  }, [preview, pushToast, bumpDataVersion, onClose, onCommitted, entry.file_path, activeCwd]);
 
   const handleVeilClick = (e: React.MouseEvent) => {
     if (e.target === veilRef.current) onClose();

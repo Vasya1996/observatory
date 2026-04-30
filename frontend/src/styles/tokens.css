@@ -3977,6 +3977,23 @@ body {
   color: var(--amber);
 }
 
+/* Tiny amber pulse dot shown while post-write /api/simulate is refetching. */
+.explorer-refetch-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  margin-left: 8px;
+  vertical-align: middle;
+  opacity: 0.85;
+  animation: explorer-refetch-pulse 0.9s ease-in-out infinite alternate;
+}
+@keyframes explorer-refetch-pulse {
+  from { opacity: 0.4; transform: scale(0.85); }
+  to   { opacity: 1;   transform: scale(1.15); }
+}
+
 /* ---------- search bar (matches mockup .filterbar) ---------- */
 .explorer-search {
   margin: 0 24px 22px 24px;

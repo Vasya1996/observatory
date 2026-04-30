@@ -25,6 +25,7 @@ export function MapView() {
   const showInternal = useStore((s) => s.showInternal);
   const lastCwd = useStore((s) => s.lastCwd);
   const setLastCwd = useStore((s) => s.setLastCwd);
+  const dataVersion = useStore((s) => s.dataVersion);
   const explorerWidth = useStore((s) => s.explorerWidth);
   const setExplorerWidth = useStore((s) => s.setExplorerWidth);
   const [cy, setCy] = useState<cytoscape.Core | null>(null);
@@ -32,6 +33,8 @@ export function MapView() {
   const [statusMap, setStatusMap] = useState<Map<string, LoadStatus> | null>(null);
   const [priorityMap, setPriorityMap] = useState<Map<string, number>>(new Map());
   const [simulateSteps, setSimulateSteps] = useState<TimelineStep[]>([]);
+  // True while a dataVersion-triggered refetch is in flight.
+  const [simulateRefetching, setSimulateRefetching] = useState(false);
   const [orphanConfigs, setOrphanConfigs] = useState<OrphanConfigEntry[]>([]);
 
   // Tier 2 banner — migrated from removed SimulatorView.
@@ -128,7 +131,8 @@ export function MapView() {
     };
   }, [lastCwd, setLastCwd]);
 
-  // Pull a per-cwd load status whenever the cwd selector changes.
+  // Pull a per-cwd load status whenever the cwd selector changes OR after a
+  // successful write (dataVersion bump) so priority badges update live.
   useEffect(() => {
     if (!lastCwd) {
       setStatusMap(null);
@@ -136,6 +140,7 @@ export function MapView() {
       return;
     }
     let cancelled = false;
+    if (dataVersion > 0) setSimulateRefetching(true);
     fetchSimulate(lastCwd)
       .then((res) => {
         if (cancelled) return;
@@ -157,15 +162,18 @@ export function MapView() {
       .catch((e) => {
         console.warn("[observatory] /api/simulate failed", e);
         if (!cancelled) setStatusMap(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSimulateRefetching(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [lastCwd, files]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastCwd, dataVersion]);
 
   // Fetch orphan_configs for the explorer pane orphan indicator.
-  // These don't depend on cwd (same for every cwd query), so we
-  // fetch once with lastCwd and update on cwd change.
+  // Refetches on cwd change AND on dataVersion bump (write may have moved a file).
   useEffect(() => {
     if (!lastCwd) return;
     let cancelled = false;
@@ -178,7 +186,8 @@ export function MapView() {
         /* non-canonical is best-effort for the explorer pane */
       });
     return () => { cancelled = true; };
-  }, [lastCwd]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastCwd, dataVersion]);
 
   const handleDblClick = useCallback((path: string) => {
     setEditorOpen(path, true);
@@ -295,6 +304,7 @@ export function MapView() {
           steps={simulateSteps}
           onRowHover={handleRowHover}
           onRowContextMenu={handleExplorerContextMenu}
+          refetching={simulateRefetching}
           ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
         />
       </ErrorBoundary>

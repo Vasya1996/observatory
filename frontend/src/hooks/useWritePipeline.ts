@@ -66,6 +66,7 @@ export function getCurrentPreviews(): PreviewedPatch[] {
 export function useWritePipeline() {
   const setWriteIntent = useStore((s) => s.setWriteIntent);
   const pushToast = useStore((s) => s.pushToast);
+  const bumpDataVersion = useStore((s) => s.bumpDataVersion);
 
   const requestWrite = useCallback(
     async (
@@ -152,9 +153,10 @@ export function useWritePipeline() {
           ? `Wrote ${patches[0].path.split("/").pop()}`
           : `Wrote ${patches.length} files`;
       pushToast({ kind: "success", message: summary });
+      bumpDataVersion();
       return { ok: true, snapshotIds };
     },
-    [setWriteIntent, pushToast],
+    [setWriteIntent, pushToast, bumpDataVersion],
   );
 
   /**
@@ -202,6 +204,7 @@ export function useWritePipeline() {
         setWriteIntent(null);
         CURRENT_PREVIEWS = [];
         pushToast({ kind: "success", message: `Wrote ${path.split("/").pop()}` });
+        bumpDataVersion();
         return { ok: true, snapshotIds: [r.snapshot_id] };
       } catch (e) {
         const status = e instanceof ApiError ? e.status : 0;
@@ -218,7 +221,7 @@ export function useWritePipeline() {
         return { ok: false, reason };
       }
     },
-    [setWriteIntent, pushToast],
+    [setWriteIntent, pushToast, bumpDataVersion],
   );
 
   return { requestWrite, confirmStagedPreview };

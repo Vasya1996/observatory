@@ -95,6 +95,8 @@ interface Props {
   onRowHover: (fileId: string | null) => void;
   /** Right-click on a tree row → parent builds ContextMenuTarget. */
   onRowContextMenu?: (e: React.MouseEvent, file: FileEntry, pluginManaged?: boolean) => void;
+  /** True while a post-write /api/simulate refetch is in flight. */
+  refetching?: boolean;
 }
 
 export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane({
@@ -104,6 +106,7 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   steps = [],
   onRowHover,
   onRowContextMenu,
+  refetching = false,
 }, ref) {
   const selectedId = useStore((s) => s.selectedId);
   const select = useStore((s) => s.select);
@@ -262,6 +265,7 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
       <div className="explorer-pane-header">
         <h2 className="explorer-pane-title">
           File <em>explorer</em>
+          {refetching && <span className="explorer-refetch-dot" aria-label="Updating priorities…" title="Updating priorities…" />}
         </h2>
         <div className="explorer-search" role="search">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

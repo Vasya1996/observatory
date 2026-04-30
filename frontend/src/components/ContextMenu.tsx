@@ -32,6 +32,7 @@ export function ContextMenu({ target, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const setEditorOpen = useStore((s) => s.setEditorOpen);
   const editorPath = useStore((s) => s.editorPath);
+  const bumpDataVersion = useStore((s) => s.bumpDataVersion);
 
   // Close on outside click.
   useEffect(() => {
@@ -76,6 +77,7 @@ export function ContextMenu({ target, onClose }: Props) {
         if (editorPath === deletedPath) {
           setEditorOpen(null, false);
         }
+        bumpDataVersion();
         onClose();
         // Long-lived toast with Undo button.
         useStore.getState().pushToast({

@@ -49,6 +49,11 @@ interface Store {
   edges: Edge[];
   setIndex: (files: FileEntry[], edges: Edge[]) => void;
 
+  // Bumped after every successful write so MapView and App re-fetch
+  // /api/simulate + /api/index and priority badges update live.
+  dataVersion: number;
+  bumpDataVersion: () => void;
+
   // Phase 4 — file explorer tree expanded state.
   // Set of folder/group node ids that are expanded. Persisted via /api/state
   // (tree_expanded: string[]). Initialised from hydrated UiState on boot;
@@ -133,6 +138,9 @@ export const useStore = create<Store>((set, get) => ({
   files: [],
   edges: [],
   setIndex: (files, edges) => set({ files, edges }),
+
+  dataVersion: 0,
+  bumpDataVersion: () => set((s) => ({ dataVersion: s.dataVersion + 1 })),
 
   treeExpanded: DEFAULT_TREE_EXPANDED,
   setTreeExpanded: (ids) => {

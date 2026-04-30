@@ -13,6 +13,7 @@ import { ExtensionsView } from "./views/ExtensionsView";
 export default function App() {
   const setIndex = useStore((s) => s.setIndex);
   const hydrate = useStore((s) => s.hydrate);
+  const dataVersion = useStore((s) => s.dataVersion);
   const view = useStore((s) => s.view);
   const files = useStore((s) => s.files);
   const edges = useStore((s) => s.edges);
@@ -21,6 +22,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Initial load: fetch both index and persisted UI state together.
   useEffect(() => {
     let cancelled = false;
     Promise.all([fetchIndex(), fetchState()])
@@ -36,7 +38,22 @@ export default function App() {
         setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [setIndex, hydrate]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-fetch index after any successful write (dataVersion bump) so file paths,
+  // writable flags, and display names reflect the new on-disk state.
+  useEffect(() => {
+    if (dataVersion === 0) return;
+    let cancelled = false;
+    fetchIndex()
+      .then((idx) => {
+        if (cancelled) return;
+        setIndex(idx.files, idx.edges);
+      })
+      .catch((e) => console.warn("[observatory] /api/index refetch failed", e));
+    return () => { cancelled = true; };
+  }, [dataVersion, setIndex]);
 
   // Counts in HeaderChrome track what's actually rendered, so the toggle
   // changes both the graph AND the pill in lockstep.
