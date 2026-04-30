@@ -185,6 +185,40 @@ def _rewrite_paths_globs(source_body: str, new_globs: list[str] | None) -> str:
     return _emit_frontmatter(fm, body)
 
 
+def _is_under_knowledge_dir(source: Path, knowledge_dir: Path) -> bool:
+    """True if source lives directly under the knowledge directory.
+
+    Used by the MEMORY.md auto-update in migrate-preview to decide whether the
+    moved file has a corresponding index entry in MEMORY.md that needs updating.
+    """
+    try:
+        source.relative_to(knowledge_dir)
+        return True
+    except ValueError:
+        return False
+
+
+def _rewrite_memory_index_path(mem_body: str, old_path: Path, new_path: Path) -> str:
+    """Rewrite the MEMORY.md line that references old_path to point to new_path.
+
+    MEMORY.md index lines use the format:
+      - [Title](path) — description
+    or plain backtick references like `path`. We do a simple string replace on
+    the home-collapsed path variants (relative, ~/..., absolute) to cover all forms.
+    Returns mem_body unchanged if no match found.
+    """
+    old_display = config.collapse_home(old_path)
+    new_display = config.collapse_home(new_path)
+    # Replace all occurrences of the old path (in any markdown reference form).
+    result = mem_body
+    for old_form, new_form in [
+        (str(old_path), new_display),
+        (old_display, new_display),
+    ]:
+        result = result.replace(old_form, new_form)
+    return result
+
+
 def _compute_glob_changes_for_move(
     source: Path,
     dest: Path,
