@@ -178,6 +178,9 @@ class UiState(BaseModel):
     # active cwd (default), "all-cwds" = 12×6 overview table. Persisted so
     # the chosen sub-tab survives reloads.
     simulator_mode: Literal["per-cwd", "all-cwds"] = "per-cwd"
+    # Whether the Editor side panel is currently open. Mirrors inspector_open
+    # semantics: persisted so the panel state survives reloads.
+    editor_open: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -373,3 +376,23 @@ class DeleteUndoRequest(BaseModel):
 
 class DeleteUndoResponse(BaseModel):
     restored: bool
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — suppress flag (user-marked "intentionally non-canonical" cwds)
+# Deliverable #36 in the locked 37-item list.
+# ---------------------------------------------------------------------------
+
+
+class SuppressedResponse(BaseModel):
+    suppressed_cwds: list[str]
+
+
+class SuppressRequest(BaseModel):
+    cwd: str
+    suppressed: bool
+
+
+class NonCanonicalWithSuppressResponse(BaseModel):
+    non_canonical: list[NonCanonicalEntry]
+    suppressed: bool

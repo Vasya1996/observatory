@@ -37,6 +37,7 @@ from .models import (
     MigratePreviewResponse,
     NonCanonicalEntry,
     NonCanonicalResponse,
+    NonCanonicalWithSuppressResponse,
     PathProposalsResponse,
     PendingWrite,
     PluginCard,
@@ -45,6 +46,8 @@ from .models import (
     SimDiffResult,
     SimulatorResponse,
     SkillCard,
+    SuppressedResponse,
+    SuppressRequest,
     UiState,
     WriteRequest,
     WriteResponse,
@@ -423,8 +426,8 @@ def post_write(req: Request, body: WriteRequest) -> WriteResponse:
     return WriteResponse(written=True, snapshot_id=snapshot_id)
 
 
-@router.get("/non-canonical", response_model=NonCanonicalResponse)
-def get_non_canonical(req: Request, cwd: str = Query(...)) -> NonCanonicalResponse:
+@router.get("/non-canonical", response_model=NonCanonicalWithSuppressResponse)
+def get_non_canonical(req: Request, cwd: str = Query(...)) -> NonCanonicalWithSuppressResponse:
     """List loaded files that don't live at their canonical slot path for the given cwd.
 
     Uses simulate(cwd) to get the load chain, then classifies each loaded/conditional
@@ -480,7 +483,44 @@ def get_non_canonical(req: Request, cwd: str = Query(...)) -> NonCanonicalRespon
                 importer_line=importer_line,
             )
         )
-    return NonCanonicalResponse(non_canonical=entries)
+    suppressed_cwds = writer.load_suppressed()
+    is_suppressed = str(cwd_resolved) in suppressed_cwds
+    return NonCanonicalWithSuppressResponse(
+        non_canonical=entries,
+        suppressed=is_suppressed,
+    )
+
+
+@router.get("/suppressed", response_model=SuppressedResponse)
+def get_suppressed() -> SuppressedResponse:
+    """Return the list of cwds the user has marked as intentionally non-canonical.
+
+    Frontend reads this to decide whether to show the yellow non-canonical badge.
+    """
+    return SuppressedResponse(suppressed_cwds=writer.load_suppressed())
+
+
+@router.post("/suppress", response_model=SuppressedResponse)
+def post_suppress(body: SuppressRequest) -> SuppressedResponse:
+    """Add or remove a cwd from the suppress list.
+
+    body.suppressed=true  → add cwd to the list (stop nagging).
+    body.suppressed=false → remove cwd from the list (re-enable badge).
+
+    No DiffModal needed — this is a UI-state flag, not a config write to the
+    user's Claude setup. Returns the updated suppressed_cwds list.
+    """
+    cwd_abs = str(Path(body.cwd).expanduser().resolve())
+    current = writer.load_suppressed()
+    if body.suppressed:
+        updated = sorted(set(current) | {cwd_abs})
+    else:
+        updated = [c for c in current if c != cwd_abs]
+    try:
+        writer.save_suppressed(updated)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"failed to save suppress list: {e}")
+    return SuppressedResponse(suppressed_cwds=updated)
 
 
 @router.post("/migrate-preview", response_model=MigratePreviewResponse)

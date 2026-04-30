@@ -173,3 +173,45 @@ def compute_content_hash(content: str | bytes) -> str:
 def read_current_hash(target_path: Path) -> str:
     """sha1 of file currently on disk; raises FileNotFoundError if absent."""
     return compute_content_hash(target_path.read_bytes())
+
+
+# ---------------------------------------------------------------------------
+# Suppress flag — ~/.claude/.observatory/suppress.json
+# Schema: {"version": 1, "suppressed_cwds": ["<absolute path>", ...]}
+# Atomic write per locked rule #37. Default if file missing: empty list.
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+SUPPRESS_FILE = config.HOME / ".claude" / ".observatory" / "suppress.json"
+
+
+def load_suppressed() -> list[str]:
+    """Return the list of suppressed cwd absolute paths.
+
+    If the file is missing or unreadable, returns an empty list — no error.
+    """
+    if not SUPPRESS_FILE.is_file():
+        return []
+    try:
+        data = _json.loads(SUPPRESS_FILE.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    cwds = data.get("suppressed_cwds")
+    if not isinstance(cwds, list):
+        return []
+    return [c for c in cwds if isinstance(c, str)]
+
+
+def save_suppressed(cwds: list[str]) -> None:
+    """Atomically write the suppressed cwd list to suppress.json.
+
+    Raises OSError if the write fails. Caller should handle gracefully.
+    """
+    payload = _json.dumps(
+        {"version": 1, "suppressed_cwds": sorted(set(cwds))},
+        indent=2,
+    )
+    atomic_write(SUPPRESS_FILE, payload + "\n")
