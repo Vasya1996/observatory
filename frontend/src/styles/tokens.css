@@ -3435,9 +3435,9 @@ body {
 /* ============================================================ */
 
 .sim-orphan-section {
-  /* Bug 3: explicit top+bottom margin prevents orphan section from bleeding into
-     the sim-header above and the slot-column headers below */
-  margin: 12px 16px 16px 16px;
+  /* left/right 28px matches sim-header horizontal padding so left edges align;
+     bottom 8px gives deliberate tight gap before column headers (not dead space) */
+  margin: 8px 28px 8px 28px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(11, 11, 14, 0.6);
@@ -3450,10 +3450,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
+  padding: 14px 16px 10px;
   background: none;
   border: none;
-  /* Bug 5: explicit bottom border ties the header row visually together —
+  /* bottom border ties the header row visually together —
      without it the chevron looks like a stray element floating at top-right */
   border-bottom: 1px solid var(--line);
   cursor: pointer;
