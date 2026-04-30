@@ -553,18 +553,40 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
     return files, edges
 
 
-def parsed_for_path(path: Path) -> Optional[ParsedFile]:
-    """Re-parse one file on demand (used by /api/file). Returns None if the
-    path isn't in the scanned set.
+def parsed_for_path(
+    path: Path, cached_entries: Optional[list[FileEntry]] = None
+) -> Optional[ParsedFile]:
+    """Re-parse one file on demand (used by /api/file).
+
+    Returns None if the path isn't in the scanned set *and* not among the
+    cached index entries (which include inferred script leaf nodes that
+    scanner.scan() never returns directly).
+
+    `cached_entries` should be the list from IndexCache.snapshot() so that
+    scripts created by the hook-inference pass in build_index() are reachable.
     """
     raw_files = scanner.scan()
-    if not any(rf.path == path for rf in raw_files):
-        return None
-    rf = next(rf for rf in raw_files if rf.path == path)
-    in_scope = {r.path.name for r in raw_files}
-    in_scope_paths = {str(r.path) for r in raw_files}
-    if rf.path.suffix == ".md":
-        return parse_markdown(
-            rf.path, rf.kind, rf.readonly, in_scope, in_scope_paths,
+    raw_match = next((rf for rf in raw_files if rf.path == path), None)
+    if raw_match is not None:
+        in_scope = {r.path.name for r in raw_files}
+        in_scope_paths = {str(r.path) for r in raw_files}
+        if raw_match.path.suffix == ".md":
+            return parse_markdown(
+                raw_match.path, raw_match.kind, raw_match.readonly,
+                in_scope, in_scope_paths,
+            )
+        return parse_json_only_metadata(raw_match.path, raw_match.kind, raw_match.readonly)
+
+    # Not in scanner.scan() — check cached_entries for inferred nodes (e.g.
+    # script leaf nodes created during the hook-inference pass).
+    if cached_entries is not None:
+        cache_match = next(
+            (e for e in cached_entries if Path(e.path) == path), None
         )
-    return parse_json_only_metadata(rf.path, rf.kind, rf.readonly)
+        if cache_match is not None:
+            # Script leaves are non-markdown, no frontmatter, no refs.
+            # Use parse_json_only_metadata as a lightweight shell for any
+            # suffix; it only reads line count and sets metadata fields.
+            return parse_json_only_metadata(path, cache_match.kind, cache_match.readonly)
+
+    return None

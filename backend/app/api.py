@@ -234,7 +234,9 @@ def get_file(req: Request, path: str = Query(...)) -> FileReadResponse:
         raise HTTPException(
             status_code=400, detail=f"path not in scanned set: {path}",
         )
-    parsed = parsed_for_path(p)
+    # Pass the cached entries so parsed_for_path can resolve inferred nodes
+    # (e.g. script leaf nodes) that scanner.scan() never returns directly.
+    parsed = parsed_for_path(p, cached_entries=files)
     if parsed is None:
         raise HTTPException(status_code=404, detail="file not found in index")
     try:
