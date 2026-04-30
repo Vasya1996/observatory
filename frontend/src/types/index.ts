@@ -137,6 +137,11 @@ export interface NonCanonicalResponse {
   non_canonical: NonCanonicalEntry[];
 }
 
+export interface NonCanonicalWithSuppressResponse {
+  non_canonical: NonCanonicalEntry[];
+  suppressed: boolean;
+}
+
 // --- Extensions view (mirrors backend ExtensionsResponse shape) -----------
 
 export interface SkillCard {

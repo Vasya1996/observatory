@@ -52,6 +52,7 @@ const MANAGED_PATHS = new Set([
 export interface SlottedFile {
   file: FileEntry;
   step: TimelineStep | undefined;
+  slot: SlotKey;
 }
 
 export type SlotMap = Record<SlotKey, SlottedFile[]>;
@@ -169,7 +170,7 @@ export function buildSlotMap(
     if (!file) continue;
     const step = stepByFileId.get(id);
     const slot = assignSlot(file, cwd);
-    result[slot].push({ file, step });
+    result[slot].push({ file, step, slot });
     if (slot !== "ondemand") assignedInNamedSlot.add(id);
   }
 
@@ -178,7 +179,7 @@ export function buildSlotMap(
     if (assignedInNamedSlot.has(id)) continue;
     const file = fileById.get(id);
     if (!file) continue;
-    result.ondemand.push({ file, step: undefined });
+    result.ondemand.push({ file, step: undefined, slot: "ondemand" });
   }
 
   // Sort each slot: steps first (in idx order), then mention-only (no step).

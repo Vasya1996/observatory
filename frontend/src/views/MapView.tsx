@@ -46,7 +46,7 @@ export function MapView() {
     [files, edges, showInternal],
   );
 
-  // When the Inspector slides in/out, the canvas width changes by 360px.
+  // When the Inspector or EditorPanel slides in/out, the canvas width changes.
   // Cytoscape's auto-resize observer picks up the size change and reflows
   // its internal viewport, but in tree mode the layout was applied as a
   // one-shot preset — without a follow-up `cy.fit()` the tree zones stay at
@@ -61,7 +61,7 @@ export function MapView() {
       cy.fit(undefined, 30);
     }, 220);
     return () => clearTimeout(t);
-  }, [cy, inspectorOpen]);
+  }, [cy, inspectorOpen, editorOpen]);
 
   // Auto-pick the first available cwd when none is set. Tree mode otherwise
   // renders an empty user-zone placeholder until the user opens the picker;

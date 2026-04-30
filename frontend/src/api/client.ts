@@ -3,7 +3,7 @@ import type {
   ExtensionsResponse,
   FileReadResponse,
   IndexResponse,
-  NonCanonicalResponse,
+  NonCanonicalWithSuppressResponse,
   PathProposalsResponse,
   SimulatorResponse,
   UiState,
@@ -55,7 +55,7 @@ export async function fetchPathProposals(): Promise<PathProposalsResponse> {
   return r.json();
 }
 
-export async function fetchNonCanonical(cwd: string): Promise<NonCanonicalResponse> {
+export async function fetchNonCanonical(cwd: string): Promise<NonCanonicalWithSuppressResponse> {
   const r = await fetch(`/api/non-canonical?cwd=${encodeURIComponent(cwd)}`);
   if (!r.ok) throw new Error(`/api/non-canonical ${r.status}`);
   return r.json();
@@ -165,6 +165,93 @@ export async function postDeleteUndo(snapshotId: string, path: string): Promise<
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ snapshot_id: snapshotId, path }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+// --- Normalize / migrate pipeline ------------------------------------------
+
+export interface MigrateFilePlan {
+  path: string;
+  action: "create" | "modify" | "delete";
+  new_content: string | null;
+  diff: string;
+}
+
+export interface SimDiffResult {
+  added: string[];
+  removed: string[];
+  hash_changed: string[];
+  unchanged_count: number;
+}
+
+export interface ImportRef {
+  file_path: string;
+  line_number: number;
+  raw_line: string;
+}
+
+export interface MigratePlan {
+  files_changed: MigrateFilePlan[];
+  sim_diff: SimDiffResult | null;
+  content_identity: "exact" | "substring" | "fail";
+  orphan_importers: ImportRef[];
+  heading_collisions: string[];
+}
+
+export interface MigratePreviewResponse {
+  tokens: string[];
+  migration_id: string;
+  plan: MigratePlan;
+}
+
+export interface MigrateFinalizeResponse {
+  finalized?: boolean;
+  rolled_back?: number | null;
+  partial_rollback?: Record<string, string[]> | null;
+}
+
+export async function postMigratePreview(body: {
+  source_path: string;
+  mode: "rule" | "merge";
+  target_dir_or_file?: string;
+  new_filename?: string;
+  delete_original?: boolean;
+}): Promise<MigratePreviewResponse> {
+  const r = await fetch("/api/migrate-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export async function postMigrateFinalize(
+  migrationId: string,
+  status: "commit" | "rollback",
+): Promise<MigrateFinalizeResponse> {
+  const r = await fetch("/api/migrate-finalize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ migration_id: migrationId, status }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+// --- Suppress flag ----------------------------------------------------------
+
+export interface SuppressedResponse {
+  suppressed_cwds: string[];
+}
+
+export async function postSuppress(cwd: string, suppressed: boolean): Promise<SuppressedResponse> {
+  const r = await fetch("/api/suppress", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cwd, suppressed }),
   });
   if (!r.ok) throw new ApiError(r.status, await readError(r));
   return r.json();
