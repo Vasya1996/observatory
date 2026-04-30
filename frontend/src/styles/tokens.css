@@ -3790,12 +3790,17 @@ body {
    and .node rules, lines 119-204).
    ========================================================================== */
 
-/* The view-shell now holds three columns: Explorer | Canvas | (Inspector).
-   Explorer is a grid column peer; canvas shrinks left by 320px always. */
+/* The view-shell holds: Explorer | Canvas | (Inspector as absolute overlay).
+   Pin-position coordinate-stability: PinOverlay sits inside .map-canvas-area
+   with position:absolute inset:0, sharing the same origin as the Cytoscape
+   canvas container. Stored {x,y} are in Cytoscape model-space, rendered via
+   cy.renderedPosition() — both are relative to the cy container div, NOT the
+   page body. The CSS grid split does not shift that origin. */
 .view-shell {
   display: grid;
-  /* explorer | canvas — inspector sits absolute over the canvas */
-  grid-template-columns: 320px 1fr;
+  /* explorer | canvas — inspector sits absolute over the canvas.
+     --explorer-w is driven by the ResizeDivider (default 320px). */
+  grid-template-columns: var(--explorer-w, 320px) 1fr;
   grid-template-rows: calc(100vh - 64px);
   height: calc(100vh - 64px);
   position: relative;
@@ -3805,21 +3810,57 @@ body {
 .explorer-pane {
   grid-column: 1;
   grid-row: 1;
-  width: 320px;
+  width: var(--explorer-w, 320px);
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  border-right: 1px solid var(--line);
   background: rgba(17, 17, 22, 0.6);
   display: flex;
   flex-direction: column;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
+  /* border-right is on the divider element, not the pane itself */
 }
 .explorer-pane::-webkit-scrollbar { width: 6px; }
 .explorer-pane::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
+}
+
+/* ---------- resize divider between Explorer and canvas ----------
+   5px hit-target with 1px visible hairline in the centre. Sits between
+   grid-column 1 and 2, stacked above the canvas area in z-order.
+   col-resize cursor makes the affordance obvious on hover. */
+.explorer-resize-divider {
+  /* Absolute positioning on top of the grid boundary between columns 1 and 2.
+     `left` is driven inline by MapView to track the live explorer width. */
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  z-index: 40;
+  cursor: col-resize;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  /* Pushes touch / mouse target to 5px while the visual line stays 1px. */
+}
+.explorer-resize-divider::before {
+  content: "";
+  width: 1px;
+  background: var(--line);
+  transition: background 120ms ease;
+  pointer-events: none;
+}
+.explorer-resize-divider:hover::before,
+.explorer-resize-divider.dragging::before {
+  background: var(--paper-faint);
+}
+.explorer-resize-divider:focus-visible {
+  outline: none;
+}
+.explorer-resize-divider:focus-visible::before {
+  background: var(--amber);
 }
 
 /* Canvas area occupies the right grid column. Position relative so that
