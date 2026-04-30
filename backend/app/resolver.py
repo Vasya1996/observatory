@@ -15,12 +15,14 @@ import hashlib
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import yaml as _yaml
 
 from . import config, hooks, scanner
-from .models import Edge, FileEntry, FileKind, Issue, PathsStatus
+from .models import Edge, EdgeKind, FileEntry, FileKind, Issue, PathsStatus
+
+AutoloadState = Literal["on", "off", "n/a"]
 from .parser import ParsedFile, file_id, parse_json_only_metadata, parse_markdown
 
 # ---------------------------------------------------------------------------
@@ -45,7 +47,7 @@ _AUTOLOAD_NA_KINDS: frozenset[FileKind] = frozenset({
 })
 
 
-def _autoload_state_rule(path: Path) -> str:
+def _autoload_state_rule(path: Path) -> AutoloadState:
     """Return "off" when the rule's paths: contains exactly the disabled sentinel."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -66,7 +68,7 @@ def _autoload_state_rule(path: Path) -> str:
     return "on"
 
 
-def _autoload_state_skill(path: Path) -> str:
+def _autoload_state_skill(path: Path) -> AutoloadState:
     """Return "off" when Skill(<plugin>:<name> *) is in settings.json permissions.deny."""
     settings_path = config.CLAUDE_DIR / "settings.json"
     if not settings_path.is_file():
@@ -98,7 +100,7 @@ def _autoload_state_skill(path: Path) -> str:
     return "off" if skill_literal in deny else "on"
 
 
-def _autoload_state_memory(path: Path) -> str:
+def _autoload_state_memory(path: Path) -> AutoloadState:
     """Return "off" when the MEMORY.md line referencing this file is commented out.
 
     Also checks @-import lines in CLAUDE.md files (comment_out_import mechanism).
@@ -165,7 +167,7 @@ def _autoload_state_memory(path: Path) -> str:
     return "on"
 
 
-def _autoload_state_claude_md(path: Path) -> str:
+def _autoload_state_claude_md(path: Path) -> AutoloadState:
     """Return "off" when path is listed in claudeMdExcludes of ANY known cwd's
     project-layer settings (<cwd>/.claude/settings.json) or the user-layer
     settings (~/.claude/settings.json or settings.local.json).
@@ -208,7 +210,7 @@ def _autoload_state_claude_md(path: Path) -> str:
     return "on"
 
 
-def compute_autoload_state(path: Path, kind: FileKind) -> str:
+def compute_autoload_state(path: Path, kind: FileKind) -> AutoloadState:
     """Compute the autoload state for a single file entry during index build."""
     if kind in _AUTOLOAD_NA_KINDS:
         return "n/a"
@@ -362,7 +364,7 @@ def build_index() -> tuple[list[FileEntry], list[Edge]]:
     # so a markdown link like `[name](name)` — which the parser sees as two
     # mentions on the same line — stays one edge with one line number, and
     # multi-line repeats become one edge with N line numbers.
-    edge_acc: dict[tuple[str, str, str], set[int]] = defaultdict(set)
+    edge_acc: dict[tuple[str, str, EdgeKind], set[int]] = defaultdict(set)
 
     for p in parsed:
         fid = file_id(p.raw_path)
