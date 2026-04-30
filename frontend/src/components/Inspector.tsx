@@ -321,7 +321,7 @@ export function Inspector({ cy, statusMap }: Props) {
       ) : (
         <EmptyState
           title="Nothing selected"
-          subtitle="Click a node to inspect its frontmatter, references, and load status."
+          subtitle="Click any file to see who loads it, what it links to, and whether Claude reads it."
           onClose={() => setInspectorOpen(false)}
         />
       )}
@@ -426,7 +426,7 @@ function InspectorBody({
       {/* FRONTMATTER -------------------------------------------------- */}
       {file.frontmatter && Object.keys(file.frontmatter).length > 0 && (
         <section className="insp-section">
-          <SectionHeader>Frontmatter</SectionHeader>
+          <SectionHeader>File settings</SectionHeader>
           <FrontmatterDL fm={file.frontmatter} />
         </section>
       )}
@@ -543,7 +543,7 @@ function KindLead({
     const required = ["name", "description", "type"] as const;
     return (
       <section className="insp-section">
-        <SectionHeader>Memory frontmatter</SectionHeader>
+        <SectionHeader>Memory fields</SectionHeader>
         <div className="insp-chips">
           {required.map((k) => {
             const value = fm[k];
@@ -1043,7 +1043,7 @@ function MemoryWriter({ file }: { file: FileEntry }) {
 
   return (
     <section className="insp-section insp-mem-writer">
-      <SectionHeader>Frontmatter</SectionHeader>
+      <SectionHeader>Edit memory fields</SectionHeader>
       <div className="insp-mem-row">
         <label className="insp-mem-k">name</label>
         <input
