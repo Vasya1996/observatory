@@ -1747,6 +1747,12 @@ body {
   overflow-x: auto;
 }
 
+/* When Inspector is open, pull the column area away from the right edge so the
+   6th column is not hidden behind the 360px Inspector overlay. */
+.sim-shell.has-inspector .sim-columns {
+  margin-right: 360px;
+}
+
 /* Header strip: cwd selector + stats chips on the same row. */
 .sim-header {
   position: sticky;
