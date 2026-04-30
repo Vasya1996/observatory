@@ -2120,24 +2120,37 @@ body {
 /* 6-column grid — all columns equal width, scroll as one page. */
 .sim-columns {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  min-height: calc(100vh - 64px - 52px); /* viewport minus chrome minus sim-header */
-  align-items: start;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  /* stretch so all 6 column right-borders span the full grid height,
+     not just the height of the tallest card stack */
+  align-items: stretch;
+  flex: 1 1 auto;
 }
 
 /* Divider between columns: applied as right-border on every column but last. */
 .sim-column {
   border-right: 1px solid var(--line);
-  padding: 0 0 80px 0;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* Bug 1: each column body scrolls internally instead of stretching the page */
+  max-height: calc(100vh - 64px - 52px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  /* Keep 40px of breathing room below the last card */
+  padding-bottom: 40px;
 }
+.sim-column::-webkit-scrollbar { width: 5px; }
+.sim-column::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
 .sim-column:last-child {
   border-right: none;
 }
 
 .sim-col-header {
   position: sticky;
-  top: calc(64px + 52px); /* chrome height + sim-header height */
+  top: 0;
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -2146,6 +2159,12 @@ body {
   background: rgba(11, 11, 14, 0.95);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(8px);
+  /* Bug 4: min-height aligns all 6 headers regardless of description line count.
+     At ~220px column width, the longest description (auto-memory) wraps to ~3 lines
+     at 10px/1.35lh ≈ 41px, plus header-top ~20px, padding 17px, gap 4px → ~82px.
+     88px gives one line of breathing room. */
+  min-height: 88px;
+  flex-shrink: 0;
 }
 .sim-col-header-top {
   display: flex;
@@ -2189,7 +2208,8 @@ body {
   flex-shrink: 0;
 }
 
-/* Empty column placeholder */
+/* Empty column placeholder — flex: 1 1 auto so it fills the column height,
+   keeping the right-border line continuous (Bug 2). */
 .sim-col-empty {
   padding: 24px 14px;
   font-family: "Instrument Serif", serif;
@@ -2199,6 +2219,7 @@ body {
   opacity: 0.55;
   text-align: center;
   line-height: 1.5;
+  flex: 1 1 auto;
 }
 
 /* File card inside a slot column */
@@ -3414,7 +3435,9 @@ body {
 /* ============================================================ */
 
 .sim-orphan-section {
-  margin: 0 16px 0 16px;
+  /* Bug 3: explicit top+bottom margin prevents orphan section from bleeding into
+     the sim-header above and the slot-column headers below */
+  margin: 12px 16px 16px 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(11, 11, 14, 0.6);
@@ -3430,6 +3453,9 @@ body {
   padding: 10px 16px;
   background: none;
   border: none;
+  /* Bug 5: explicit bottom border ties the header row visually together —
+     without it the chevron looks like a stray element floating at top-right */
+  border-bottom: 1px solid var(--line);
   cursor: pointer;
   gap: 12px;
   transition: background 120ms ease;
@@ -3473,13 +3499,11 @@ body {
 
 .sim-orphan-section-desc {
   margin: 0;
-  padding: 0 16px 10px 16px;
+  padding: 8px 16px 10px 16px;
   font-family: "IBM Plex Sans", system-ui, sans-serif;
   font-size: 11.5px;
   color: var(--paper-faint);
   line-height: 1.5;
-  border-top: 1px dashed var(--line);
-  padding-top: 8px;
 }
 
 .sim-orphan-cards {
