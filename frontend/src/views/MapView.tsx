@@ -167,7 +167,7 @@ export function MapView() {
         const row = pane!.querySelector(`[data-file-id="${id}"]`);
         if (row) {
           row.classList.add("graph-hovered");
-          row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          row.scrollIntoView({ block: "center", behavior: "smooth" });
         }
       }
     }
