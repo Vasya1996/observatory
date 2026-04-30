@@ -55,8 +55,15 @@ def _slot_for_always_canonical(fp: Path, cwd: Path) -> str:
     category even though we never flag these kinds as non-canonical.
     """
     claude_dir = config.CLAUDE_DIR
-    if _is_under(fp, config.AUTO_MEMORY_DIR):
-        return SLOT_AUTO_MEMORY
+    # AUTO_MEMORY_DIR now points to projects/ root; check for <project>/memory/ pattern.
+    projects_dir = claude_dir / "projects"
+    if _is_under(fp, projects_dir):
+        # Any file under <project>/memory/ is auto-memory.
+        parts = fp.parts
+        proj_parts = projects_dir.parts
+        rel = parts[len(proj_parts):]  # (project_dir_name, "memory", ...)
+        if len(rel) >= 2 and rel[1] == "memory":
+            return SLOT_AUTO_MEMORY
     if _is_under(fp, claude_dir / "knowledge") or _is_under(fp, claude_dir / "skills"):
         return SLOT_USER_GLOBAL
     if _is_under(fp, claude_dir / "remote" / "plugins"):
@@ -122,12 +129,15 @@ def classify_step(
         return SLOT_MANAGED, True, str(managed_path), ""
 
     # --- Auto-memory slot ---
-    auto_mem_base = claude_dir / "projects"
-    if _is_under(fp, auto_mem_base):
-        # Only the designated auto-memory zone is canonical; other projects/ paths
-        # are blacklisted — they shouldn't be in the index at all.
-        canonical_for_auto = str(config.AUTO_MEMORY_DIR)
-        if _is_under(fp, config.AUTO_MEMORY_DIR):
+    projects_root = claude_dir / "projects"
+    if _is_under(fp, projects_root):
+        # Only <project>/memory/ paths are canonical auto-memory.
+        # Other paths under projects/ are blacklisted and shouldn't be here.
+        parts = fp.parts
+        proj_parts = projects_root.parts
+        rel = parts[len(proj_parts):]  # (proj_name, subdir, ...)
+        canonical_for_auto = str(projects_root)
+        if len(rel) >= 2 and rel[1] == "memory":
             return SLOT_AUTO_MEMORY, True, canonical_for_auto, ""
         return SLOT_AUTO_MEMORY, False, canonical_for_auto, "outside_canonical_dir"
 

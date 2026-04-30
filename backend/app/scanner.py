@@ -178,9 +178,22 @@ def scan() -> list[RawFile]:
         out.extend(_scan_project_zone(cwd))
 
     # Auto-memory zone (read-only).
-    if config.AUTO_MEMORY_DIR.is_dir():
-        for p in _glob(config.AUTO_MEMORY_DIR, "*.md"):
-            out.append(RawFile(p, "automemory", readonly=True))
+    # Each project gets ~/.claude/projects/<project>/memory/ — scan all of them.
+    # Limit to *.md files inside each memory/ subdir to avoid session logs.
+    projects_dir = config.CLAUDE_DIR / "projects"
+    if projects_dir.is_dir():
+        try:
+            project_dirs = sorted(
+                d for d in projects_dir.iterdir() if d.is_dir()
+            )
+        except OSError:
+            project_dirs = []
+        for proj_dir in project_dirs:
+            memory_dir = proj_dir / "memory"
+            if memory_dir.is_dir():
+                for p in _glob(memory_dir, "*.md"):
+                    if not config.is_blacklisted(p):
+                        out.append(RawFile(p, "automemory", readonly=True))
 
     return out
 
@@ -212,6 +225,13 @@ def _scan_project_zone(cwd: Path) -> list[RawFile]:
     ]:
         if _exists_file(p) and not config.is_blacklisted(p):
             out.append(RawFile(p, "claude_md"))
+    # AGENTS.md is NOT auto-loaded by Claude Code — it only loads via an
+    # explicit `@AGENTS.md` import in CLAUDE.md (item 10 in the 37-item plan).
+    # Surfaced as a graph node so the user can see it; the simulator leaves it
+    # as an orphan unless there is an @AGENTS.md import in a loaded file.
+    agents_md = cwd / "AGENTS.md"
+    if _exists_file(agents_md) and not config.is_blacklisted(agents_md):
+        out.append(RawFile(agents_md, "claude_md", readonly=True))
     for p in _glob(cwd / ".claude" / "rules", "*.md"):
         if not config.is_blacklisted(p):
             out.append(RawFile(p, "rule"))
@@ -313,6 +333,19 @@ def scan_roots() -> list[tuple[Path, bool]]:
     not the entire repo subtree which can blow past inotify watch limits on
     large checkouts with `node_modules`/`.git`/etc).
     """
+    # Collect all <project>/memory/ dirs to watch (non-recursive per dir —
+    # memory dirs are small and managed by Claude Code, not by the user).
+    auto_memory_watches: list[tuple[Path, bool]] = []
+    projects_dir = config.CLAUDE_DIR / "projects"
+    if projects_dir.is_dir():
+        try:
+            for proj_dir in sorted(d for d in projects_dir.iterdir() if d.is_dir()):
+                mem_dir = proj_dir / "memory"
+                if mem_dir.is_dir():
+                    auto_memory_watches.append((mem_dir, False))
+        except OSError:
+            pass
+
     candidates: list[tuple[Path, bool]] = [
         (config.HOME, False),  # ~/CLAUDE.md only — we filter events in the watcher
         (config.CLAUDE_DIR, True),
@@ -321,7 +354,7 @@ def scan_roots() -> list[tuple[Path, bool]]:
         (config.CLAUDE_DIR / "skills", True),
         (config.CLAUDE_DIR / "remote" / "plugins", True),
         (config.CLAUDE_DIR / "plugins", True),
-        (config.AUTO_MEMORY_DIR, True),
+        *auto_memory_watches,
     ]
     # Project-zone roots: top-level non-recursive (catches CLAUDE.md and
     # CLAUDE.local.md edits without watching the entire repo); the rules dir

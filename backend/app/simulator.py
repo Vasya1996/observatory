@@ -20,6 +20,7 @@ Step 5 is what makes the simulator work for any user: we don't hardcode
 """
 from __future__ import annotations
 
+import os
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -91,6 +92,41 @@ def _matches_paths(globs: list[str], cwd: Path) -> Optional[str]:
     return None
 
 
+def _add_dir_paths() -> list[Path]:
+    """Return paths from CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD env var.
+
+    Claude Code respects --add-dir paths ONLY when
+    CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 is set (item 8 in the
+    37-item plan). If the env var is absent or not "1", --add-dir paths must
+    NOT contribute CLAUDE.md to the load chain.
+
+    The paths themselves come from CLAUDE_CODE_ADD_DIR_PATHS (a hypothetical
+    env var) or more likely from Claude Code's internal session config — we
+    can only observe their effect, not inject them. This function is a no-op
+    placeholder that returns [] unless the feature is explicitly enabled and
+    paths are provided.
+    """
+    if os.environ.get("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD") != "1":
+        return []
+    raw = os.environ.get("CLAUDE_CODE_ADD_DIR_PATHS", "")
+    if not raw:
+        return []
+    return [Path(p.strip()).expanduser() for p in raw.split(":") if p.strip()]
+
+
+def _setting_sources_excludes_local() -> bool:
+    """Return True if CLAUDE_CODE_SETTING_SOURCES excludes 'local'.
+
+    When --setting-sources excludes 'local', CLAUDE.local.md from --add-dir
+    paths should be skipped (item 9 in the 37-item plan).
+    """
+    sources = os.environ.get("CLAUDE_CODE_SETTING_SOURCES", "")
+    if not sources:
+        return False
+    parts = {s.strip() for s in sources.split(",")}
+    return "local" not in parts
+
+
 def simulate(
     cwd: Path,
     files: list[FileEntry],
@@ -157,6 +193,10 @@ def simulate(
               f"Team-shared CLAUDE.md at {config.collapse_home(cwd / '.claude')}")
 
     # 5. Walk up from cwd to ~ (exclusive of duplicates already covered above).
+    # --add-dir paths contribute additional CLAUDE.md entries ONLY when
+    # CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 (item 8).
+    extra_dirs = _add_dir_paths()
+    skip_local_from_extra = _setting_sources_excludes_local()
     ancestors = _ancestors_to_home(cwd)
     seen_dirs: set[Path] = set()
     for d in ancestors:
@@ -199,7 +239,22 @@ def simulate(
                     _push(f, "conditional", None,
                           f"paths: {f.paths_globs} did not match cwd")
 
-    # 5. Transitive @-imports.
+    # 5a. --add-dir paths (only when CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1).
+    # Per Claude Code docs, --add-dir adds directories whose CLAUDE.md files
+    # are loaded in addition to the ancestor-walk chain. CLAUDE.local.md from
+    # these paths is skipped when --setting-sources excludes "local".
+    for extra in extra_dirs:
+        cm = by_path.get(str(extra / "CLAUDE.md"))
+        if cm and cm.id not in loaded_ids:
+            _push(cm, "loaded", "add-dir",
+                  f"CLAUDE.md from --add-dir path {config.collapse_home(extra)}")
+        if not skip_local_from_extra:
+            local_cm = by_path.get(str(extra / "CLAUDE.local.md"))
+            if local_cm and local_cm.id not in loaded_ids:
+                _push(local_cm, "loaded", "add-dir",
+                      f"CLAUDE.local.md from --add-dir path {config.collapse_home(extra)}")
+
+    # 6. Transitive @-imports.
     queue: deque[str] = deque(loaded_ids)
     while queue:
         src = queue.popleft()

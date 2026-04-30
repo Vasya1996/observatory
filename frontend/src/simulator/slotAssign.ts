@@ -47,7 +47,7 @@ export const SLOT_DESCRIPTIONS: Record<SlotKey, string> = {
   user:    "Your personal rules that apply to every project on this machine.",
   ancestor: "CLAUDE.md and CLAUDE.local.md files found in parent folders, loaded top-down.",
   project:  "Rules checked into the current project and shared with your team.",
-  automemory: "Notes Claude writes itself based on your corrections (per folder, first 200 lines).",
+  automemory: "Notes Claude writes itself based on your corrections. Specific to this project — first 200 lines load automatically.",
   ondemand:   "Files Claude can read when it opens matching files — not loaded at the start of every session.",
 };
 

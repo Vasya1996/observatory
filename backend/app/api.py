@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
-from . import canonical, config, paths_proposals, scanner, writer
+from . import canonical, config, paths_proposals, scanner, tier2, writer
 from .markdown_merge import plan_merge
 from .models import (
     CommittedFile,
@@ -53,7 +53,6 @@ from .models import (
     WriteResponse,
 )
 from .orphan_imports import find_importers
-from .sim_diff import snapshot_simulator_state
 from .resolver import parsed_for_path
 from .simulator import simulate
 from .state import load as state_load
@@ -343,6 +342,24 @@ def post_preview(req: Request, body: PreviewRequest) -> PreviewResponse:
     """
     _purge_expired_pending()
     target = Path(body.path).expanduser().resolve()
+
+    # Item 17: refuse to edit the managed-policy CLAUDE.md without elevated
+    # privileges. The managed path is OS-specific (see config.py); it's
+    # typically owned by root/admin and requires sudo to modify.
+    managed_path = config.os_managed_claude_md_path()
+    try:
+        if target == managed_path.resolve():
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Managed-policy CLAUDE.md cannot be edited through Observatory. "
+                    "It requires elevated privileges (sudo). "
+                    f"Path: {managed_path}"
+                ),
+            )
+    except OSError:
+        pass
+
     files, _, _ = _cache(req).snapshot()
     in_scope = {Path(f.path): f for f in files}
 
@@ -523,7 +540,6 @@ def get_non_canonical(req: Request, cwd: str = Query(...)) -> NonCanonicalWithSu
         importer_line: int | None = None
         if reason == "loaded_via_at_import" and step.reason:
             # reason text: "Imported via @ from <display>:<line>"
-            import re as _re
             m = _re.search(r"from (.+?)(?::(\d+))?$", step.reason)
             if m:
                 imp_display = m.group(1)
@@ -856,18 +872,10 @@ def post_migrate_preview(
     # We simulate the proposed write in memory by temporarily patching
     # files_changed into the cache snapshot, then diffing.
     # -------------------------------------------------------------------------
-    cwds = list(scanner.discover_cwds())
-    pre_state = snapshot_simulator_state(cwds, cache)
-
-    # Simulate the proposed writes in memory by adjusting by_path lookup.
-    # We build a patched files list where modified/created entries have updated
-    # body content (but we can't easily update the index without disk I/O).
-    # For the post-state, we write to tmp files, snapshot, and restore.
-    # The safe approach: just use the current state as both pre and post
-    # for the plan; the actual diff is computed on confirm.  For preview
-    # purposes we report what WOULD change based on the plan text.
-    # (Full pre/post diff requires disk writes; we compute it here by
-    # constructing a minimal SimDiffResult from the plan.)
+    # Simulate the proposed writes in memory.
+    # Full pre/post diff requires disk writes, which we don't do at preview time.
+    # Instead, construct a minimal SimDiffResult from the plan. This is enough
+    # for the UI to show what files will be added/removed/modified.
     # Files added by this plan → appear in post but not pre.
     added_paths = [
         fc.path for fc in files_changed if fc.action == "create"
@@ -1180,13 +1188,186 @@ def post_restore_from_snapshot(
 
 @router.get("/tier2-status")
 def get_tier2_status() -> dict:
-    """Return whether Tier 2 deep verification is available on this system.
+    """Return Tier 2 deep-verify status including pre-flight checks.
 
-    Frontend renders an informational banner from this when available=false.
-    Flip config.TIER2_AVAILABLE to True once the --init-only empirical probe
-    confirms InstructionsLoaded fires (Phase 3 plan section 5, open question 1).
+    Tier 2 works via an InstructionsLoaded hook that appends each event payload
+    to ~/.claude/.observatory/instructions.jsonl. The hook is installed through
+    the normal preview/write pipeline so it goes through DiffModal.
+
+    Returns a rich status dict — available, installed, preflight details,
+    event count captured so far.
     """
-    return {"available": config.TIER2_AVAILABLE, "reason": config.TIER2_REASON}
+    return tier2.get_tier2_status()
+
+
+@router.get("/tier2-preflight")
+def get_tier2_preflight() -> dict:
+    """Run Tier 2 pre-flight checks: disableAllHooks, allowManagedHooksOnly, NFS.
+
+    Returns {ok, reason, disable_all_hooks, allow_managed_only, nfs}.
+    """
+    return tier2.check_preflight()
+
+
+@router.post("/tier2-install-preview")
+def post_tier2_install_preview(req: Request) -> PreviewResponse:
+    """Preview installing the Tier 2 InstructionsLoaded hook in settings.json.
+
+    Generates the new settings.json content with the hook entry added and
+    returns a confirm_token via the normal preview pipeline. The caller
+    must confirm via /api/write.
+
+    Returns 412 if pre-flight checks fail (managed policy blocks hooks).
+    """
+    preflight = tier2.check_preflight()
+    if not preflight["ok"]:
+        raise HTTPException(
+            status_code=412,
+            detail=preflight["reason"],
+        )
+    _purge_expired_pending()
+    settings_path = config.CLAUDE_DIR / "settings.json"
+    new_data = tier2.build_settings_with_hook(settings_path)
+    new_content = json.dumps(new_data, indent=2, ensure_ascii=False) + "\n"
+
+    if settings_path.is_file():
+        try:
+            current = settings_path.read_text(encoding="utf-8")
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"read error: {e}")
+    else:
+        current = ""
+
+    base_hash = writer.compute_content_hash(current)
+    diff_lines = difflib.unified_diff(
+        current.splitlines(keepends=True),
+        new_content.splitlines(keepends=True),
+        fromfile=f"a/{config.collapse_home(settings_path)}",
+        tofile=f"b/{config.collapse_home(settings_path)}",
+        n=3,
+    )
+    diff = "".join(diff_lines)
+    confirm_token = uuid.uuid4().hex
+    PENDING_WRITES[confirm_token] = PendingWrite(
+        path=str(settings_path),
+        new_content=new_content,
+        base_hash=base_hash,
+        is_creation=not settings_path.is_file(),
+        created_at=datetime.now(timezone.utc),
+    )
+    return PreviewResponse(
+        confirm_token=confirm_token,
+        diff=diff,
+        base_hash=base_hash,
+        is_creation=not settings_path.is_file(),
+    )
+
+
+@router.post("/tier2-uninstall-preview")
+def post_tier2_uninstall_preview(req: Request) -> PreviewResponse:
+    """Preview removing the Tier 2 hook from settings.json.
+
+    Returns 404 if the hook is not currently installed.
+    """
+    if not tier2.hook_is_installed():
+        raise HTTPException(status_code=404, detail="Tier 2 hook is not currently installed.")
+    _purge_expired_pending()
+    settings_path = config.CLAUDE_DIR / "settings.json"
+    new_data = tier2.build_settings_without_hook(settings_path)
+    new_content = json.dumps(new_data, indent=2, ensure_ascii=False) + "\n"
+    try:
+        current = settings_path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"read error: {e}")
+    base_hash = writer.compute_content_hash(current)
+    diff_lines = difflib.unified_diff(
+        current.splitlines(keepends=True),
+        new_content.splitlines(keepends=True),
+        fromfile=f"a/{config.collapse_home(settings_path)}",
+        tofile=f"b/{config.collapse_home(settings_path)}",
+        n=3,
+    )
+    diff = "".join(diff_lines)
+    confirm_token = uuid.uuid4().hex
+    PENDING_WRITES[confirm_token] = PendingWrite(
+        path=str(settings_path),
+        new_content=new_content,
+        base_hash=base_hash,
+        is_creation=False,
+        created_at=datetime.now(timezone.utc),
+    )
+    return PreviewResponse(
+        confirm_token=confirm_token,
+        diff=diff,
+        base_hash=base_hash,
+        is_creation=False,
+    )
+
+
+@router.get("/tier2-events")
+def get_tier2_events(session_id: str = Query(None)) -> dict:
+    """Return captured InstructionsLoaded events from the JSONL file.
+
+    If session_id is provided, only events for that session are returned.
+    Otherwise all events are returned, grouped by session_id.
+
+    Returns {total: int, by_session: {session_id: [event, ...]}}
+    """
+    tier2.maybe_rotate_jsonl()
+    events = tier2.read_events(session_id=session_id)
+    by_session = tier2.group_by_session(events)
+    return {"total": len(events), "by_session": by_session}
+
+
+@router.get("/tier2-compare")
+def get_tier2_compare(req: Request, cwd: str = Query(...), session_id: str = Query(None)) -> dict:
+    """Compare Tier 2 hook events against simulator prediction for a cwd.
+
+    For each file:
+      green:   in both simulator and hook events (loaded as expected)
+      neutral: in simulator only (loader-suppressed — observation-based, no
+               hardcoded setting name per Phase 3 plan section 4)
+      red:     in hook events only (simulator gap — missed something)
+
+    If session_id is not provided, uses the most recent session for this cwd.
+
+    Returns {cwd, session_id, results: [{file_path, outcome, ...}]}
+    """
+    p = Path(cwd).expanduser()
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"cwd not a directory: {cwd}")
+    cwd_resolved = p.resolve()
+
+    # Get simulator prediction.
+    files, edges, _ = _cache(req).snapshot()
+    from .simulator import simulate as _simulate
+    sim_resp = _simulate(cwd_resolved, files, edges)
+    sim_loaded = {
+        (Path.home() / s.file_path[2:] if s.file_path.startswith("~/") else Path(s.file_path)).resolve()
+        for s in sim_resp.steps
+        if s.status == "loaded"
+    }
+    sim_loaded_strs = {str(p) for p in sim_loaded}
+
+    # Get hook events.
+    events = tier2.read_events()
+    cwd_str = str(cwd_resolved)
+    cwd_events = [e for e in events if e.get("cwd") == cwd_str]
+
+    if session_id is None and cwd_events:
+        # Use most recent session for this cwd.
+        session_id = cwd_events[-1].get("session_id")
+
+    if session_id:
+        cwd_events = [e for e in cwd_events if e.get("session_id") == session_id]
+
+    results = tier2.compare_for_cwd(cwd_resolved, cwd_events, sim_loaded_strs)
+    return {
+        "cwd": str(cwd_resolved),
+        "session_id": session_id,
+        "hook_events_found": len(cwd_events),
+        "results": results,
+    }
 
 
 @router.get("/events")

@@ -12,8 +12,11 @@ from pathlib import Path
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
 
-# Auto-memory zone — read-only, scanned but not parsed for outbound refs.
-AUTO_MEMORY_DIR = CLAUDE_DIR / "projects" / "-home-voxdecaelo" / "memory"
+# Auto-memory zone root — ~/.claude/projects/. Each project gets its own
+# subdirectory; we scan all <project>/memory/ subdirs dynamically in the
+# scanner (not hardcoded to any single project path, so any user's machine
+# works correctly). AUTO_MEMORY_DIR kept for backwards compat with is_blacklisted.
+AUTO_MEMORY_DIR = CLAUDE_DIR / "projects"
 
 # Hard blacklist: directories the scanner refuses to descend into even if a
 # scope target above transitively implies them. These all contain hundreds to
@@ -47,18 +50,6 @@ FRONTEND_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Tier 2 deep-verify availability flag.
-# Flip TIER2_AVAILABLE to True when --init-only empirical probe is confirmed
-# working on this Claude version (see Phase 3 plan section 5 open questions).
-# ---------------------------------------------------------------------------
-TIER2_AVAILABLE: bool = False
-TIER2_REASON: str = (
-    "Deep verification requires --init-only flag, "
-    "not present in this Claude version"
-)
 
 
 def os_managed_claude_md_path() -> Path:
@@ -104,16 +95,18 @@ def is_blacklisted(path: Path) -> bool:
             return True
         except ValueError:
             continue
-    # projects/* is blacklisted except the auto-memory subdir.
+    # projects/* is blacklisted except */memory/ subdirs (auto-memory).
     projects = CLAUDE_DIR / "projects"
     try:
         resolved.relative_to(projects)
-        # Allow the auto-memory subdir.
-        try:
-            resolved.relative_to(AUTO_MEMORY_DIR)
-            return False
-        except ValueError:
-            return True
     except ValueError:
-        pass
-    return False
+        return False
+    # Allow any <project>/memory/ path — that's the auto-memory zone.
+    # The pattern is ~/.claude/projects/<project>/memory/<file>
+    parts = resolved.parts
+    projects_parts = projects.parts
+    rel_parts = parts[len(projects_parts):]
+    # rel_parts[0] = project dir, rel_parts[1] = "memory", rel_parts[2] = file
+    if len(rel_parts) >= 2 and rel_parts[1] == "memory":
+        return False
+    return True

@@ -58,6 +58,8 @@ class ParsedFile:
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _IMPORT_RE = re.compile(r"(?<![A-Za-z0-9_])@(/[^\s)`]+|~/[^\s)`]+|\.{1,2}/[^\s)`]+)")
+# HTML block comments stripped by Claude Code before context injection (item 11).
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _FENCE_RE = re.compile(r"^\s*```")
 # Path-shaped mentions: `~/foo/bar.md` or `/abs/path/bar.md`. Lookbehind
 # blocks alphanumerics/`/`/`.` before the token so we don't catch URLs
@@ -241,7 +243,12 @@ def parse_markdown(
     in_scope_paths: set[str],
 ) -> ParsedFile:
     text = path.read_text(encoding="utf-8", errors="replace")
-    line_count = text.count("\n") + (0 if text.endswith("\n") else 1) if text else 0
+    # Strip HTML block comments before counting lines — Claude Code removes
+    # them before injecting file content into the context window (item 11).
+    # Count non-blank lines after stripping; the comment removal leaves blank
+    # lines that Claude Code also trims before token accounting.
+    text_for_tokens = _HTML_COMMENT_RE.sub("", text)
+    line_count = sum(1 for ln in text_for_tokens.splitlines() if ln.strip()) if text_for_tokens else 0
 
     fm_text, body, body_start_line = _split_frontmatter(text)
     frontmatter: Optional[dict[str, Any]] = None

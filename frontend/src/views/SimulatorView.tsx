@@ -661,6 +661,7 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
   const isNonCanon = !!nonCanonEntry;
   const basename = file.path.split("/").pop() ?? "";
   const isAgentsMd = file.kind === "claude_md" && basename === "AGENTS.md";
+  const isLocalMd = file.kind === "claude_md" && basename === "CLAUDE.local.md";
 
   // Managed slot cards are not draggable (read-only).
   const isDraggable = entry.slot !== "managed" && file.kind !== "automemory"
@@ -755,6 +756,11 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
           Claude Code reads CLAUDE.md, not AGENTS.md. To use this file, add <code>@AGENTS.md</code> inside your CLAUDE.md.
         </div>
       )}
+      {isLocalMd && (
+        <div className="sim-card-agents-note">
+          Personal overrides for this project only — add to .gitignore so it isn't shared with teammates.
+        </div>
+      )}
     </div>
   );
 }
@@ -767,7 +773,7 @@ function StatusChip({ status }: { status: LoadStatus }) {
     status === "loaded" ? "loaded"
     : status === "conditional" ? "may load"
     : status === "skipped" ? "available on demand"
-    : "not loaded";
+    : "not in load chain";
   return <span className={cls}>{label}</span>;
 }
 
