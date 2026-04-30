@@ -1383,9 +1383,13 @@ def get_tier2_compare(req: Request, cwd: str = Query(...), session_id: Optional[
 # field point to a pattern that can never match any real file.
 _DISABLED_SENTINEL = ".DISABLED"
 
-# Comment prefix injected into CLAUDE.md @-import lines and MEMORY.md index
-# entries when toggling a knowledge file's autoload off.
-_DISABLED_COMMENT_PREFIX = "# [disabled by Observatory] "
+# HTML comment marker injected into CLAUDE.md @-import lines and MEMORY.md
+# index entries when toggling a knowledge file's autoload off.
+# HTML comments are invisible when the file is rendered as Markdown and do not
+# trigger Claude Code's special handling of leading-# lines (which are treated
+# as external prompts in CLAUDE.md). Round-trip: disable prepends the marker,
+# re-enable strips exactly marker + trailing space to restore original bytes.
+_DISABLED_COMMENT_PREFIX = "<!-- [disabled by Observatory] --> "
 
 
 def _autoload_toggle_rule(current: str, enabled: bool) -> tuple[str, AutoloadMechanism]:
@@ -1474,8 +1478,10 @@ def _autoload_toggle_knowledge_memory_index(
                 changed = True
                 continue
         else:
-            # Add the disabled prefix to a non-comment line mentioning the file.
-            if not stripped.startswith("#") and (
+            # Add the disabled prefix to a line that isn't already disabled and
+            # mentions the target file. Guard against double-wrapping by
+            # checking the HTML comment marker rather than a bare #.
+            if not stripped.startswith(_DISABLED_COMMENT_PREFIX) and (
                 target_display in stripped or target_basename in stripped
             ):
                 new_lines.append(_DISABLED_COMMENT_PREFIX + stripped + "\n")
@@ -1509,8 +1515,13 @@ def _find_at_import_parent(
             continue
         for i, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
+            # Also match lines that are currently disabled (HTML comment wrapper).
+            # The re-enable path needs to locate the commented-out import.
+            candidate = stripped
+            if candidate.startswith(_DISABLED_COMMENT_PREFIX):
+                candidate = candidate[len(_DISABLED_COMMENT_PREFIX):]
             for pat in import_patterns:
-                if stripped == pat or stripped.startswith(pat + " "):
+                if candidate == pat or candidate.startswith(pat + " "):
                     return Path(f.path), i, line
     return None, None, None
 
@@ -1533,7 +1544,7 @@ def _autoload_toggle_knowledge_import(
         else:
             lines[idx] = stripped_line + "\n"
     else:
-        if not stripped_line.startswith("#"):
+        if not stripped_line.startswith(_DISABLED_COMMENT_PREFIX):
             lines[idx] = _DISABLED_COMMENT_PREFIX + stripped_line + "\n"
     return "".join(lines), "comment_out_import"
 
