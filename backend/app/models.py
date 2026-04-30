@@ -187,6 +187,10 @@ class UiState(BaseModel):
     # Keys match the folder node ids the tree builder emits (typically the
     # absolute directory path). Persisted so expand state survives reloads.
     tree_expanded: list[str] = Field(default_factory=list)
+    # Width of the Explorer column in pixels. Frontend clamps to [240, 480];
+    # default 320 matches the locked spec. Persisted so the user's drag-resized
+    # layout survives reloads.
+    tree_width: int = 320
 
 
 # ---------------------------------------------------------------------------
