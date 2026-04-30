@@ -151,12 +151,15 @@ def scan() -> list[RawFile]:
         out.append(RawFile(plugin_registry, "plugin_registry"))
 
     # User-installed plugins. Their files live under `plugins/cache/...` which
-    # is blacklisted (would drown the graph in LICENSE/README/screenshots) — but
-    # we still want each plugin's identity on the graph. Hand-pick: only the
-    # `plugin.json` (canonical name + version) per installed plugin, sourced
-    # from the registry's installPath. Skills/commands inside each plugin are
-    # ignored for now; surfacing them needs a separate UX decision.
-    out.extend(_scan_user_plugins(plugin_registry))
+    # is blacklisted to prevent the full directory walk from drowning the graph
+    # in LICENSE/README/screenshots. Surgical opt-in:
+    #   1. _scan_user_plugins — one identity file (plugin.json or README.md) per plugin.
+    #   2. _scan_plugin_cache_contents — recursive walk for skill/command/agent/script
+    #      content; bypasses blacklist deliberately (targeted walk, not a catch-all glob).
+    plugin_representatives = _scan_user_plugins(plugin_registry)
+    out.extend(plugin_representatives)
+    seen_rep_paths: set[Path] = {rf.path for rf in plugin_representatives}
+    out.extend(_scan_plugin_cache_contents(seen_rep_paths))
 
     # Settings — global + machine-local. Both can carry hook/statusLine
     # definitions; the resolver merges hook refs from either source.
@@ -318,6 +321,90 @@ def _scan_user_plugins(registry: Path) -> list[RawFile]:
                         display_name_override=plugin_name,
                     )
                 )
+    return out
+
+
+def _plugin_cache_kind(path: Path) -> Optional[FileKind]:
+    """Map a file inside plugins/cache/ to a FileKind, or None to skip it.
+
+    Kind rules (in priority order):
+      - plugin.json anywhere in the tree → plugin_manifest (deduplication via seen
+        set in the caller keeps this from double-indexing the identity file).
+      - SKILL.md directly under skills/<name>/ → skill
+      - Any *.md under skills/<name>/references/ → skill (reference material)
+      - Any *.md under commands/ or agents/ → skill (slash-commands / sub-agent defs)
+      - Any *.{sh,py,js,ts} under hooks/ → script
+      - Other *.json (e.g. manifest.json at plugin root) → mcp
+      - Everything else (README.md, LICENSE, images, …) → skip
+    """
+    name = path.name
+    parts = path.parts
+
+    if name == "plugin.json":
+        return "plugin_manifest"
+
+    if name == "SKILL.md":
+        # Must be directly under skills/<skill-name>/
+        for i, part in enumerate(parts):
+            if part == "skills" and i + 2 < len(parts) and parts[i + 2] == "SKILL.md":
+                return "skill"
+        return None
+
+    if path.suffix == ".md":
+        # references/ under a skill dir → skill
+        for i, part in enumerate(parts):
+            if part == "references" and i >= 2:
+                grandparent = parts[i - 2] if i >= 2 else None
+                if grandparent == "skills":
+                    return "skill"
+        # commands/ or agents/ at plugin root level → skill
+        for part in parts:
+            if part in ("commands", "agents"):
+                return "skill"
+        return None
+
+    if path.suffix in (".sh", ".py", ".js", ".ts"):
+        for part in parts:
+            if part == "hooks":
+                return "script"
+        return None
+
+    if path.suffix == ".json" and name != "plugin.json":
+        return "mcp"
+
+    return None
+
+
+def _scan_plugin_cache_contents(seen: set[Path]) -> list[RawFile]:
+    """Recursively scan ~/.claude/plugins/cache/ for plugin content files.
+
+    Bypasses the blacklist deliberately — this is a surgical opt-in walk, NOT
+    a catch-all directory scan. Locked rule #5 permits targeted opt-in reads;
+    the blacklist only blocks the *general* scanner pathways from descending here.
+
+    All emitted files are readonly=True: plugin-cache content is managed by
+    Claude Code and must never be edited through Observatory.
+
+    Already-indexed paths (from _scan_user_plugins) are skipped via the `seen`
+    set to avoid double-indexing the plugin identity files.
+    """
+    cache_root = config.CLAUDE_DIR / "plugins" / "cache"
+    if not cache_root.is_dir():
+        return []
+    out: list[RawFile] = []
+    try:
+        all_files = sorted(cache_root.rglob("*"))
+    except OSError:
+        return []
+    for path in all_files:
+        if not path.is_file():
+            continue
+        if path in seen:
+            continue
+        kind = _plugin_cache_kind(path)
+        if kind is None:
+            continue
+        out.append(RawFile(path, kind, readonly=True))
     return out
 
 
