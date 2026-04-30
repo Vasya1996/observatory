@@ -39,7 +39,6 @@ from .models import (
     MigratePreviewResponse,
     NonCanonicalEntry,
     NonCanonicalWithSuppressResponse,
-    OrphanConfigEntry,
     PathProposalsResponse,
     PendingWrite,
     PluginCard,
@@ -1143,7 +1142,6 @@ def post_restore_from_snapshot(
     target = Path(body.path).expanduser().resolve()
 
     # Permission check: only writable kinds can be restored through Observatory.
-    from .resolver import WRITABLE_KINDS
     files, _, _ = _cache(req).snapshot()
     in_scope = {Path(f.path): f for f in files}
     entry = in_scope.get(target)
@@ -1220,7 +1218,7 @@ def get_tier2_preflight() -> dict:
 
 
 @router.post("/tier2-install-preview")
-def post_tier2_install_preview(req: Request) -> PreviewResponse:
+def post_tier2_install_preview() -> PreviewResponse:
     """Preview installing the Tier 2 InstructionsLoaded hook in settings.json.
 
     Generates the new settings.json content with the hook entry added and
@@ -1274,7 +1272,7 @@ def post_tier2_install_preview(req: Request) -> PreviewResponse:
 
 
 @router.post("/tier2-uninstall-preview")
-def post_tier2_uninstall_preview(req: Request) -> PreviewResponse:
+def post_tier2_uninstall_preview() -> PreviewResponse:
     """Preview removing the Tier 2 hook from settings.json.
 
     Returns 404 if the hook is not currently installed.
@@ -1389,9 +1387,7 @@ _DISABLED_SENTINEL = ".DISABLED"
 _DISABLED_COMMENT_PREFIX = "# [disabled by Observatory] "
 
 
-def _autoload_toggle_rule(
-    target: Path, current: str, enabled: bool
-) -> tuple[str, str]:
+def _autoload_toggle_rule(current: str, enabled: bool) -> tuple[str, str]:
     """Compute new content for a rule file toggle and the mechanism used.
 
     Returns (new_content, mechanism).
@@ -1421,7 +1417,7 @@ def _autoload_toggle_rule(
 
 
 def _autoload_toggle_skill(
-    target: Path, current_settings: str, enabled: bool, skill_literal: str
+    current_settings: str, enabled: bool, skill_literal: str
 ) -> tuple[str, str]:
     """Patch settings.json permissions.deny for a skill toggle.
 
@@ -1447,38 +1443,6 @@ def _autoload_toggle_skill(
         else:
             data.pop("permissions", None)
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n", "permissions_deny"
-
-
-def _autoload_toggle_mcp(
-    mcp_content: str, server_name: str, enabled: bool
-) -> tuple[str, str]:
-    """Move an MCP server entry between mcpServers and mcpServers_disabled.
-
-    Returns (new_mcp_content, mechanism).
-    """
-    try:
-        data = json.loads(mcp_content)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail=f".mcp.json parse error: {exc}")
-    active: dict = data.get("mcpServers") or {}
-    disabled: dict = data.get("mcpServers_disabled") or {}
-    if enabled:
-        # Move from disabled back to active.
-        entry = disabled.pop(server_name, None)
-        if entry is None:
-            raise HTTPException(status_code=400, detail=f"MCP server '{server_name}' not found in mcpServers_disabled")
-        active[server_name] = entry
-    else:
-        entry = active.pop(server_name, None)
-        if entry is None:
-            raise HTTPException(status_code=400, detail=f"MCP server '{server_name}' not found in mcpServers")
-        disabled[server_name] = entry
-    data["mcpServers"] = active
-    if disabled:
-        data["mcpServers_disabled"] = disabled
-    else:
-        data.pop("mcpServers_disabled", None)
-    return json.dumps(data, indent=2, ensure_ascii=False) + "\n", "mcp_disabled_key"
 
 
 def _autoload_toggle_knowledge_memory_index(
@@ -1551,8 +1515,7 @@ def _find_at_import_parent(
 
 
 def _autoload_toggle_knowledge_import(
-    parent_path: Path, current_parent: str, target_path: Path,
-    line_number: int, raw_line: str, enabled: bool
+    current_parent: str, line_number: int, raw_line: str, enabled: bool
 ) -> tuple[str, str]:
     """Comment or uncomment the @-import line in the parent CLAUDE.md.
 
@@ -1624,7 +1587,7 @@ def post_autoload_toggle_preview(
             current = target.read_text(encoding="utf-8")
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"read error: {exc}")
-        new_content, mechanism = _autoload_toggle_rule(target, current, body.enabled)
+        new_content, mechanism = _autoload_toggle_rule(current, body.enabled)
         write_target = target
         current_for_diff = current
 
@@ -1644,7 +1607,7 @@ def post_autoload_toggle_preview(
             current_for_diff = settings_path.read_text(encoding="utf-8") if settings_path.is_file() else "{}\n"
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"settings.json read error: {exc}")
-        new_content, mechanism = _autoload_toggle_skill(target, current_for_diff, body.enabled, skill_literal)
+        new_content, mechanism = _autoload_toggle_skill(current_for_diff, body.enabled, skill_literal)
         write_target = settings_path
 
     # --- memory ---
@@ -1660,7 +1623,7 @@ def post_autoload_toggle_preview(
             except OSError as exc:
                 raise HTTPException(status_code=500, detail=f"parent read error: {exc}")
             new_content, mechanism = _autoload_toggle_knowledge_import(
-                parent_path, current_for_diff, target, line_number, raw_line or "", body.enabled
+                current_for_diff, line_number, raw_line or "", body.enabled
             )
             write_target = parent_path
         else:
