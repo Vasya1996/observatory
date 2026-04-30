@@ -3794,30 +3794,27 @@ body {
    Explorer is a grid column peer; canvas shrinks left by 320px always. */
 .view-shell {
   display: grid;
-  /* explorer | canvas (flex) | inspector sits absolute right */
+  /* explorer | canvas — inspector sits absolute over the canvas */
   grid-template-columns: 320px 1fr;
-  grid-template-rows: 1fr;
-  min-height: calc(100vh - 64px);
+  grid-template-rows: calc(100vh - 64px);
+  height: calc(100vh - 64px);
   position: relative;
+  overflow: hidden;
 }
 
 .explorer-pane {
   grid-column: 1;
   grid-row: 1;
   width: 320px;
-  height: calc(100vh - 64px);
+  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   border-right: 1px solid var(--line);
   background: rgba(17, 17, 22, 0.6);
   display: flex;
   flex-direction: column;
-  position: sticky;
-  top: 64px;      /* below the chrome */
-  align-self: start;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
-  flex-shrink: 0;
 }
 .explorer-pane::-webkit-scrollbar { width: 6px; }
 .explorer-pane::-webkit-scrollbar-thumb {
@@ -3825,32 +3822,31 @@ body {
   border-radius: 3px;
 }
 
-/* Canvas area occupies the right grid column; Inspector overlays it
-   from the right via its existing absolute positioning. */
+/* Canvas area occupies the right grid column. Position relative so that
+   the Inspector (.inspector-pane, position absolute) attaches here. */
 .map-canvas-area {
   grid-column: 2;
   grid-row: 1;
   position: relative;
   width: 100%;
-  height: calc(100vh - 64px);
+  height: 100%;
+  overflow: hidden;
 }
 
-/* When Inspector is open, shrink canvas from right (existing rule,
-   now scoped to grid-column 2 which is already right of Explorer). */
+/* When Inspector is open, shrink the canvas drawing area from the right
+   so cytoscape fits within the visible strip. */
 .view-shell.has-inspector .map-canvas-area {
   width: calc(100% - 360px);
 }
 
-/* When EditorPanel is open, shift canvas content left within its column. */
+/* When EditorPanel is open, shift the canvas content right within the column. */
 .view-shell.has-editor .map-canvas-area {
   margin-left: 480px;
   width: calc(100% - 480px);
   transition: margin-left 200ms ease-out, width 200ms ease-out;
 }
 
-/* Both Inspector and EditorPanel open — canvas gets very narrow at 1440px.
-   At 1440px: 320(explorer) + 480(editor) + canvas + 360(inspector) = 1440
-   → canvas = 1440-320-480-360 = 280px. Acceptable at design viewport. */
+/* Both panels open — canvas strip shrinks to 100%−480px−360px within the column. */
 .view-shell.has-inspector.has-editor .map-canvas-area {
   width: calc(100% - 480px - 360px);
 }
