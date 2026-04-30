@@ -1516,7 +1516,7 @@ def _find_at_import_parent(
 
 
 def _autoload_toggle_knowledge_import(
-    current_parent: str, line_number: int, raw_line: str, enabled: bool
+    current_parent: str, line_number: int, enabled: bool
 ) -> tuple[str, AutoloadMechanism]:
     """Comment or uncomment the @-import line in the parent CLAUDE.md.
 
@@ -1617,14 +1617,14 @@ def post_autoload_toggle_preview(
         # (a) @-import in a CLAUDE.md or rule file, or
         # (b) entry in MEMORY.md knowledge index.
         # Try (a) first; fall back to (b).
-        parent_path, line_number, raw_line = _find_at_import_parent(files, target)
+        parent_path, line_number, _ = _find_at_import_parent(files, target)
         if parent_path is not None and line_number is not None:
             try:
                 current_for_diff = parent_path.read_text(encoding="utf-8")
             except OSError as exc:
                 raise HTTPException(status_code=500, detail=f"parent read error: {exc}")
             new_content, mechanism = _autoload_toggle_knowledge_import(
-                current_for_diff, line_number, raw_line or "", body.enabled
+                current_for_diff, line_number, body.enabled
             )
             write_target = parent_path
         else:
@@ -1692,7 +1692,6 @@ def _derive_skill_literal(skill_md_path: Path) -> str | None:
     plugin's cached snapshot. We infer plugin_id from the parent directory
     name and name from the SKILL.md frontmatter.
     """
-    import yaml as _yaml_inner
     try:
         text = skill_md_path.read_text(encoding="utf-8")
     except OSError:
