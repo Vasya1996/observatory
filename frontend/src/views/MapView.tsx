@@ -10,6 +10,7 @@ import { EdgeInfo } from "../components/EdgeInfo";
 import { TokenBudgetBar } from "../components/TokenBudgetBar";
 import { EditorPanel } from "../components/EditorPanel";
 import { ContextMenu } from "../components/ContextMenu";
+import { ErrorBoundary, EditorBoundary } from "../components/ErrorBoundary";
 import type { ContextMenuTarget } from "../components/ContextMenu";
 import { fetchCwds, fetchNonCanonical, fetchSimulate } from "../api/client";
 import { useStore, EXPLORER_WIDTH_MIN, EXPLORER_WIDTH_MAX } from "../state/store";
@@ -250,12 +251,14 @@ export function MapView() {
       style={{ "--explorer-w": `${explorerWidth}px` } as React.CSSProperties}
     >
       {/* Phase 4: Explorer pane — width driven by --explorer-w CSS var. */}
-      <ExplorerPane
-        files={visibleFiles}
-        orphanConfigs={orphanConfigs}
-        onRowHover={handleRowHover}
-        ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
-      />
+      <ErrorBoundary label="Explorer">
+        <ExplorerPane
+          files={visibleFiles}
+          orphanConfigs={orphanConfigs}
+          onRowHover={handleRowHover}
+          ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
+        />
+      </ErrorBoundary>
 
       {/* Resize divider between Explorer and canvas.
           Positioned at the right edge of the explorer column via `left`. */}
@@ -271,27 +274,33 @@ export function MapView() {
         onContextMenu={handleContextMenu}
       >
         {/* EditorPanel slides in from the left edge of the canvas area. */}
-        <EditorPanel files={visibleFiles} />
-        <GraphCanvas
-          files={visibleFiles}
-          edges={visibleEdges}
-          onReady={setCy}
-          onHoverEdge={setHoveredEdge}
-          onDblClick={handleDblClick}
-          statusMap={statusMap}
-          positions={positions}
-          zones={zones}
-          treeMode={treeMode}
-        />
-        <IconOverlay cy={cy} />
-        {/* Locked rule #33: PinOverlay is graph-mode only. */}
-        <PinOverlay cy={treeMode ? null : cy} />
-        <CwdSelector />
-        <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
-        {treeMode && <TokenBudgetBar zones={zones} />}
-        {treeMode && <ZoneLabels />}
+        <EditorBoundary>
+          <EditorPanel files={visibleFiles} />
+        </EditorBoundary>
+        <ErrorBoundary label="Graph">
+          <GraphCanvas
+            files={visibleFiles}
+            edges={visibleEdges}
+            onReady={setCy}
+            onHoverEdge={setHoveredEdge}
+            onDblClick={handleDblClick}
+            statusMap={statusMap}
+            positions={positions}
+            zones={zones}
+            treeMode={treeMode}
+          />
+          <IconOverlay cy={cy} />
+          {/* Locked rule #33: PinOverlay is graph-mode only. */}
+          <PinOverlay cy={treeMode ? null : cy} />
+          <CwdSelector />
+          <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
+          {treeMode && <TokenBudgetBar zones={zones} />}
+          {treeMode && <ZoneLabels />}
+        </ErrorBoundary>
       </div>
-      <Inspector cy={cy} statusMap={statusMap} />
+      <ErrorBoundary label="Inspector">
+        <Inspector cy={cy} statusMap={statusMap} />
+      </ErrorBoundary>
       <ContextMenu target={ctxTarget} onClose={() => setCtxTarget(null)} />
     </div>
   );
