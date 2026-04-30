@@ -57,6 +57,7 @@ function basename(p: string): string {
 }
 
 function collapseToHome(p: string, home: string): string {
+  if (home && p === home) return "~";
   if (home && p.startsWith(home + "/")) return "~" + p.slice(home.length);
   return p;
 }
