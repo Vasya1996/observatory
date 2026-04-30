@@ -97,6 +97,13 @@ interface Props {
   onSelect?: (fileId: string) => void;
 }
 
+// Expand "~/foo" → "/home/user/foo" using the derived home path.
+function expandHome(p: string, home: string): string {
+  if (home && p === "~") return home;
+  if (home && p.startsWith("~/")) return home + p.slice(1);
+  return p;
+}
+
 export function CrossCwdPanel({ steps, files, activeCwd, home, onSelect }: Props) {
   const fileMap = new Map<string, FileEntry>();
   for (const f of files) fileMap.set(f.id, f);
@@ -104,10 +111,12 @@ export function CrossCwdPanel({ steps, files, activeCwd, home, onSelect }: Props
   for (const f of files) filesByPath.set(f.path, f);
 
   // Filter to steps whose file_path is NOT under activeCwd.
+  // The API returns paths with "~/" prefix — expand before comparing.
   const crossSteps = steps.filter((s) => {
     if (!s.file_path) return false;
-    if (s.file_path === activeCwd) return false;
-    if (s.file_path.startsWith(activeCwd + "/")) return false;
+    const abs = expandHome(s.file_path, home);
+    if (abs === activeCwd) return false;
+    if (abs.startsWith(activeCwd + "/")) return false;
     // Only include loaded/conditional steps — skipped items are irrelevant here.
     if (s.status === "skipped") return false;
     return true;
@@ -116,12 +125,15 @@ export function CrossCwdPanel({ steps, files, activeCwd, home, onSelect }: Props
   if (crossSteps.length === 0) return null;
 
   const items: CrossCwdFile[] = crossSteps.map((step) => {
-    const file = step.file_id ? fileMap.get(step.file_id) : filesByPath.get(step.file_path);
+    const absPath = expandHome(step.file_path, home);
+    const file = step.file_id
+      ? fileMap.get(step.file_id)
+      : (filesByPath.get(absPath) ?? filesByPath.get(step.file_path));
     return {
       step,
       file,
       priority: step.priority ?? 6,
-      displayPath: collapseToHome(step.file_path, home),
+      displayPath: collapseToHome(absPath, home),
     };
   });
 
