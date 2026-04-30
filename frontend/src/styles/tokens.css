@@ -2588,3 +2588,368 @@ body {
   background: var(--line);
   border-radius: 3px;
 }
+
+/* ---------- Editor side panel (left slide-in, 480px) ----------
+   Mirrors the Inspector's slide-in language but from the left.
+   Opened by double-clicking any graph node or slot card. */
+
+.editor-pane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 480px;
+  background: var(--ink-2);
+  border-right: 1px solid var(--line);
+  z-index: 25;
+  transform: translateX(-100%);
+  transition: transform 200ms ease-out;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+.editor-pane.open {
+  transform: translateX(0);
+  box-shadow: 24px 0 48px -24px rgba(0, 0, 0, 0.7);
+  pointer-events: auto;
+}
+
+/* Simulator view: editor pane is fixed overlay (absolute in sim-shell) */
+.sim-shell .editor-pane {
+  position: fixed;
+  top: 64px;
+  bottom: 0;
+  left: 0;
+}
+
+.editor-pane-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 14px 20px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.editor-pane-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.editor-pane-filename {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-pane-path {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-pane-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--paper-faint);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 120ms ease;
+}
+.editor-pane-close:hover { color: var(--paper); }
+
+.editor-pane-body {
+  flex: 1 1 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* CodeMirror wrapper — fills the body exactly. */
+.editor-cm-wrap {
+  flex: 1 1 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.editor-cm-wrap .cm-editor {
+  flex: 1 1 auto;
+  height: 100%;
+  overflow: auto;
+}
+
+.editor-pane-state {
+  padding: 24px 20px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-faint);
+  letter-spacing: 0.1em;
+}
+.editor-pane-state.editor-pane-error {
+  color: var(--rust);
+}
+
+.editor-pane-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--ink-2);
+}
+
+.editor-pane-meta {
+  display: flex;
+  gap: 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  color: var(--paper-faint);
+  letter-spacing: 0.1em;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.editor-pane-readonly {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  color: var(--paper-faint);
+  letter-spacing: 0.1em;
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.editor-pane-save {
+  appearance: none;
+  border: 1px solid var(--amber);
+  background: transparent;
+  color: var(--amber);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.editor-pane-save:hover:not(:disabled) {
+  background: var(--amber);
+  color: #0b0b0e;
+}
+.editor-pane-save:disabled {
+  border-color: var(--line);
+  color: var(--paper-faint);
+  cursor: default;
+}
+
+/* When the Editor pane is open, shrink the canvas area from the left. */
+.view-shell.has-editor .map-canvas-area {
+  margin-left: 480px;
+  width: calc(100% - 480px);
+  transition: margin-left 200ms ease-out, width 200ms ease-out;
+}
+
+/* ---------- Context menu + confirm dialog ---------- */
+
+.ctx-menu {
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-width: 160px;
+  padding: 4px 0;
+  z-index: 200;
+}
+
+.ctx-menu-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  padding: 8px 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: background 100ms ease;
+}
+.ctx-menu-item-danger {
+  color: var(--rust);
+}
+.ctx-menu-item-danger:hover {
+  background: rgba(207, 103, 71, 0.1);
+}
+.ctx-menu-item-disabled {
+  color: var(--paper-faint);
+  cursor: not-allowed;
+}
+.ctx-menu-item-hint {
+  font-size: 9px;
+  color: var(--paper-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ctx-confirm {
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 16px 18px 14px 18px;
+  min-width: 280px;
+  max-width: 360px;
+  z-index: 200;
+}
+
+.ctx-confirm-title {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--paper);
+  margin-bottom: 8px;
+}
+
+.ctx-confirm-body {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.ctx-confirm-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ctx-confirm-cancel {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--paper-dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 100ms ease, color 100ms ease;
+}
+.ctx-confirm-cancel:hover:not(:disabled) {
+  border-color: var(--paper-dim);
+  color: var(--paper);
+}
+
+.ctx-confirm-delete {
+  appearance: none;
+  border: 1px solid var(--rust);
+  background: transparent;
+  color: var(--rust);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+.ctx-confirm-delete:hover:not(:disabled) {
+  background: var(--rust);
+  color: #0b0b0e;
+}
+.ctx-confirm-delete:disabled,
+.ctx-confirm-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Toast undo button */
+.toast-undo-btn {
+  appearance: none;
+  border: 1px solid var(--lime);
+  background: transparent;
+  color: var(--lime);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 100ms ease, color 100ms ease;
+}
+.toast-undo-btn:hover:not(:disabled) {
+  background: var(--lime);
+  color: #0b0b0e;
+}
+.toast-undo-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.toast-undo-error {
+  color: var(--rust);
+}
+
+/* AGENTS.md orphan note inside a slot card */
+.sim-card-agents-note {
+  margin-top: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  font-style: italic;
+  color: var(--paper-faint);
+  line-height: 1.4;
+}
+.sim-card-agents-note code {
+  font-style: normal;
+  color: var(--amber);
+}
+
+/* All-cwds table: placeholder cells (data not yet loaded) */
+.sim-allcwds-cell-placeholder {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 4px,
+    rgba(110, 106, 94, 0.08) 4px,
+    rgba(110, 106, 94, 0.08) 8px
+  );
+}
+
+/* All-cwds loading banner (shown above the table while data arrives) */
+.sim-allcwds-loading-banner {
+  padding: 6px 24px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}

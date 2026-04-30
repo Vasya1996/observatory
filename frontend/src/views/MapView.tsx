@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type cytoscape from "cytoscape";
 import { CwdSelector } from "../components/CwdSelector";
 import { GraphCanvas } from "../components/GraphCanvas";
@@ -7,6 +7,9 @@ import { Inspector } from "../components/Inspector";
 import { PinOverlay } from "../components/PinOverlay";
 import { EdgeInfo } from "../components/EdgeInfo";
 import { TokenBudgetBar } from "../components/TokenBudgetBar";
+import { EditorPanel } from "../components/EditorPanel";
+import { ContextMenu } from "../components/ContextMenu";
+import type { ContextMenuTarget } from "../components/ContextMenu";
 import { fetchCwds, fetchSimulate } from "../api/client";
 import { useStore } from "../state/store";
 import { applyInternalFilter } from "../state/visibility";
@@ -32,6 +35,11 @@ export function MapView() {
 
   const treeMode = mapMode === "tree";
   const inspectorOpen = useStore((s) => s.inspectorOpen);
+  const editorOpen = useStore((s) => s.editorOpen);
+  const setEditorOpen = useStore((s) => s.setEditorOpen);
+
+  // Context menu state.
+  const [ctxTarget, setCtxTarget] = useState<ContextMenuTarget | null>(null);
 
   const { files: visibleFiles, edges: visibleEdges } = useMemo(
     () => applyInternalFilter(files, edges, showInternal),
@@ -57,10 +65,7 @@ export function MapView() {
 
   // Auto-pick the first available cwd when none is set. Tree mode otherwise
   // renders an empty user-zone placeholder until the user opens the picker;
-  // pre-filling lets it show real content on first load. We fetch the cwd
-  // list locally too — CwdSelector also calls /api/cwds, but the cost is
-  // negligible (cached, single request) and decoupling makes this effect
-  // self-contained.
+  // pre-filling lets it show real content on first load.
   useEffect(() => {
     if (lastCwd) return;
     let cancelled = false;
@@ -77,11 +82,7 @@ export function MapView() {
     };
   }, [lastCwd, setLastCwd]);
 
-  // Pull a per-cwd load status whenever the cwd selector changes. Status is
-  // derived from `/api/simulate`: each step contributes its TimelineStatus by
-  // file_id; files absent from steps[] are tagged "orphan" — they exist on
-  // disk but Claude wouldn't reach them in the active cwd. When no cwd is
-  // selected, the map is null and the graph renders kind-only colors as before.
+  // Pull a per-cwd load status whenever the cwd selector changes.
   useEffect(() => {
     if (!lastCwd) {
       setStatusMap(null);
@@ -109,10 +110,7 @@ export function MapView() {
     };
   }, [lastCwd, files]);
 
-  // Tree-mode positions: only computed when we actually need them so graph
-  // mode pays zero cost. The map keys are FileEntry.id so it composes with the
-  // existing visibility filter without remapping. `zones` rides alongside so
-  // GraphCanvas can apply per-zone styling without re-deriving membership.
+  // Tree-mode positions.
   const layout = useMemo(() => {
     if (!treeMode) return null;
     return buildTreePositions(
@@ -126,18 +124,64 @@ export function MapView() {
   const positions = layout?.positions ?? null;
   const zones: ZoneMap | null = layout?.zones ?? null;
 
+  const handleDblClick = useCallback((path: string) => {
+    setEditorOpen(path, true);
+  }, [setEditorOpen]);
+
+  // Right-click on graph canvas: find the node under the pointer and show context menu.
+  const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cy) return;
+    e.preventDefault();
+    const container = cy.container();
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const renderedX = e.clientX - rect.left;
+    const renderedY = e.clientY - rect.top;
+    // Find the node whose rendered bounding-box contains the click point.
+    // `renderedBoundingBox()` returns canvas-coordinate bounds so we compare
+    // against rendered (not model) coordinates.
+    let hitNode: cytoscape.NodeSingular | null = null;
+    cy.nodes().forEach((n) => {
+      if (n.data("kind") === "folder") return;
+      const bb = n.renderedBoundingBox({});
+      if (
+        renderedX >= bb.x1 &&
+        renderedX <= bb.x2 &&
+        renderedY >= bb.y1 &&
+        renderedY <= bb.y2
+      ) {
+        hitNode = n as cytoscape.NodeSingular;
+      }
+    });
+    if (!hitNode) return;
+    const nodeId = (hitNode as cytoscape.NodeSingular).id();
+    const file = files.find((f) => f.id === nodeId);
+    if (!file) return;
+    const displayName = file.display_name ?? file.path.split("/").pop() ?? file.path;
+    setCtxTarget({
+      path: file.path,
+      displayName,
+      writable: file.writable ?? true,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  }, [cy, files]);
+
   return (
-    <div className={`view-shell${inspectorOpen ? " has-inspector" : ""}`}>
-      {/* Canvas-area wrapper — narrows to leave 360px for the Inspector when
-          open. CwdSelector / EdgeInfo / TokenBudgetBar / ZoneLabels live
-          inside this wrapper so they reposition relative to the visible
-          canvas, not the underlying full view-shell. */}
-      <div className="map-canvas-area">
+    <div className={`view-shell${inspectorOpen ? " has-inspector" : ""}${editorOpen ? " has-editor" : ""}`}>
+      {/* EditorPanel slides in from the left. Canvas area shrinks via
+          .view-shell.has-editor .map-canvas-area CSS rule. */}
+      <EditorPanel files={visibleFiles} />
+      <div
+        className="map-canvas-area"
+        onContextMenu={handleContextMenu}
+      >
         <GraphCanvas
           files={visibleFiles}
           edges={visibleEdges}
           onReady={setCy}
           onHoverEdge={setHoveredEdge}
+          onDblClick={handleDblClick}
           statusMap={statusMap}
           positions={positions}
           zones={zones}
@@ -152,17 +196,12 @@ export function MapView() {
         {treeMode && <ZoneLabels />}
       </div>
       <Inspector cy={cy} statusMap={statusMap} />
+      <ContextMenu target={ctxTarget} onClose={() => setCtxTarget(null)} />
     </div>
   );
 }
 
-// Corner labels marking the tree-mode sub-zones. Uses JetBrains Mono
-// uppercase 10px (matches the existing `.upper` token in tokens.css) so the
-// language stays consistent with the cwd panel header. The cwd selector lives
-// at top-left z=30; the user label nudges down to clear it AND the
-// TokenBudgetBar's "USER · N" label that sits at the very top of the canvas
-// in tree mode. The right-corner project label sits at top:48 so it clears
-// the budget bar too (no cwd selector on the right).
+// Corner labels marking the tree-mode sub-zones.
 function ZoneLabels() {
   const base: React.CSSProperties = {
     position: "absolute",
@@ -182,11 +221,8 @@ function ZoneLabels() {
       }}
       aria-hidden
     >
-      {/* USER zone: top-left third, below cwd selector + budget bar. */}
       <div style={{ ...base, top: 88, left: 16 }}>user layer</div>
-      {/* PROJECT zone: top-right third, below budget bar. */}
       <div style={{ ...base, top: 88, right: 16 }}>project layer</div>
-      {/* SETTINGS zone: bottom centre, above the bottom strip. */}
       <div style={{ ...base, bottom: 16, left: "50%", transform: "translateX(-50%)" }}>
         settings layer
       </div>

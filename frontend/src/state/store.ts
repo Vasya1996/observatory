@@ -32,6 +32,12 @@ export interface Toast {
   id: string;
   kind: ToastKind;
   message: string;
+  // Optional undo action for delete toasts.
+  undoSnapshotId?: string;
+  undoPath?: string;
+  undoLabel?: string;
+  // Auto-dismiss delay in ms. Defaults to 2500ms; delete toasts use 10000ms.
+  ttl?: number;
 }
 
 interface Store {
@@ -49,6 +55,12 @@ interface Store {
   // explicit toggle via the × button or `setInspectorOpen(false)`.
   inspectorOpen: boolean;
   setInspectorOpen: (open: boolean) => void;
+
+  // Editor side panel (left slide-in). Path of the file currently open in
+  // the editor; null when no file is open. `editorOpen` controls visibility.
+  editorPath: string | null;
+  editorOpen: boolean;
+  setEditorOpen: (path: string | null, open: boolean) => void;
 
   view: ViewKey;
   setView: (v: ViewKey) => void;
@@ -91,6 +103,7 @@ function snapshot(s: Store): UiState {
     map_mode: s.mapMode,
     inspector_open: s.inspectorOpen,
     simulator_mode: s.simulatorMode,
+    editor_open: s.editorOpen,
   };
 }
 
@@ -127,6 +140,13 @@ export const useStore = create<Store>((set, get) => ({
   inspectorOpen: false,
   setInspectorOpen: (open) => {
     set({ inspectorOpen: open });
+    schedulePersist(get);
+  },
+
+  editorPath: null,
+  editorOpen: false,
+  setEditorOpen: (path, open) => {
+    set({ editorPath: path, editorOpen: open });
     schedulePersist(get);
   },
 
@@ -183,6 +203,7 @@ export const useStore = create<Store>((set, get) => ({
       mapMode: s.map_mode ?? "graph",
       inspectorOpen: s.inspector_open ?? false,
       simulatorMode: s.simulator_mode ?? "per-cwd",
+      editorOpen: s.editor_open ?? false,
     }),
 
   writeIntent: null,

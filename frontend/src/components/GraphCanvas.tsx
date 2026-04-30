@@ -19,6 +19,9 @@ interface Props {
   edges: Edge[];
   onReady?: (cy: cytoscape.Core | null) => void;
   onHoverEdge?: (edge: Edge | null) => void;
+  // Double-click/double-tap on a node: called with the FileEntry path so the
+  // parent can open the EditorPanel. Folder umbrella nodes are skipped.
+  onDblClick?: (path: string) => void;
   // Per-cwd load status from `/api/simulate`. Keys are FileEntry.id; values are
   // the simulator's TimelineStatus + frontend-derived "orphan" (file not in
   // steps[] for the active cwd) and "unknown" (no cwd selected — opacity
@@ -116,6 +119,7 @@ export function GraphCanvas({
   edges,
   onReady,
   onHoverEdge,
+  onDblClick,
   statusMap,
   positions,
   zones,
@@ -136,6 +140,10 @@ export function GraphCanvas({
   // re-renders without forcing the whole graph to rebuild.
   const onHoverEdgeRef = useRef(onHoverEdge);
   onHoverEdgeRef.current = onHoverEdge;
+
+  // Latest onDblClick in a ref — same pattern as onHoverEdge.
+  const onDblClickRef = useRef(onDblClick);
+  onDblClickRef.current = onDblClick;
 
   // Latest tree-mode positions in a ref so the construction effect can read
   // the initial map without listing `positions` as a dependency (locked rule
@@ -185,6 +193,7 @@ export function GraphCanvas({
           id: f.id,
           label: displayLabel(f, ambiguousBasenames),
           kind: f.kind,
+          path: f.path,
           color: nodeColor(f.kind),
           size: nodeSize(f.kind, inDeg[f.id] ?? 0, maxInDeg),
         },
@@ -716,6 +725,12 @@ export function GraphCanvas({
       // halo, never opens the Inspector.
       if (n.data("kind") === "folder") return;
       useStore.getState().select(n.id());
+    });
+    cy.on("dbltap", "node", (e) => {
+      const n = e.target as cytoscape.NodeSingular;
+      if (n.data("kind") === "folder") return;
+      const path = n.data("path") as string | undefined;
+      if (path) onDblClickRef.current?.(path);
     });
     cy.on("tap", (e) => {
       if (e.target === cy) {

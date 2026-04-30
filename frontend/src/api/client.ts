@@ -123,3 +123,49 @@ export async function postWrite(confirmToken: string): Promise<WriteResponse> {
   if (!r.ok) throw new ApiError(r.status, await readError(r));
   return r.json();
 }
+
+// --- Delete pipeline -------------------------------------------------------
+
+export interface DeletePreviewResponse {
+  confirm_token: string;
+  snapshot_id: string;
+}
+
+export interface DeleteConfirmResponse {
+  deleted: boolean;
+  snapshot_id: string;
+}
+
+export interface DeleteUndoResponse {
+  restored: boolean;
+}
+
+export async function postDeletePreview(path: string): Promise<DeletePreviewResponse> {
+  const r = await fetch("/api/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export async function postDeleteConfirm(confirmToken: string): Promise<DeleteConfirmResponse> {
+  const r = await fetch("/api/delete-confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm_token: confirmToken }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export async function postDeleteUndo(snapshotId: string, path: string): Promise<DeleteUndoResponse> {
+  const r = await fetch("/api/delete-undo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ snapshot_id: snapshotId, path }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}

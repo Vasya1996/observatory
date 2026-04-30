@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CwdSelector } from "../components/CwdSelector";
 import { Inspector } from "../components/Inspector";
+import { EditorPanel } from "../components/EditorPanel";
+import { ContextMenu } from "../components/ContextMenu";
+import type { ContextMenuTarget } from "../components/ContextMenu";
 import { fetchCwds, fetchNonCanonical, fetchSimulate } from "../api/client";
 import { useStore } from "../state/store";
 import {
@@ -197,6 +200,9 @@ export function SimulatorView() {
 
   const nonCanonCount = nonCanonMap.size;
 
+  const setEditorOpen = useStore((s) => s.setEditorOpen);
+  const [ctxTarget, setCtxTarget] = useState<ContextMenuTarget | null>(null);
+
   const handleOpenFile = useCallback((filePath: string) => {
     const f = files.find((x) => x.path === filePath);
     if (f) {
@@ -209,6 +215,20 @@ export function SimulatorView() {
     setLastCwd(cwd);
     setSimulatorMode("per-cwd");
   }, [setLastCwd, setSimulatorMode]);
+
+  const handleDblClick = useCallback((path: string) => {
+    setEditorOpen(path, true);
+  }, [setEditorOpen]);
+
+  const handleContextMenu = useCallback((
+    e: React.MouseEvent,
+    path: string,
+    displayName: string,
+    writable: boolean,
+  ) => {
+    e.preventDefault();
+    setCtxTarget({ path, displayName, writable, x: e.clientX, y: e.clientY });
+  }, []);
 
   return (
     <div className={`sim-shell${inspectorOpen ? " has-inspector" : ""}`}>
@@ -272,8 +292,9 @@ export function SimulatorView() {
               ambiguous={ambiguous}
               selectedId={selectedId}
               onSelect={select}
+              onDblClick={handleDblClick}
+              onContextMenu={handleContextMenu}
               nonCanonMap={nonCanonMap}
-              files={files}
             />
           ))}
         </div>
@@ -287,7 +308,9 @@ export function SimulatorView() {
         />
       )}
 
+      <EditorPanel files={files} />
       <Inspector cy={null} statusMap={statusMap} />
+      <ContextMenu target={ctxTarget} onClose={() => setCtxTarget(null)} />
     </div>
   );
 }
@@ -309,7 +332,6 @@ function NonCanonPanel({ entries, files, onOpen }: NonCanonPanelProps) {
       </div>
       <ul className="sim-noncanon-panel-list">
         {entries.map((e) => {
-          const basename = e.file_path.split("/").pop() ?? e.file_path;
           const fileInIndex = files.some((f) => f.path === e.file_path);
           return (
             <li key={e.file_path} className="sim-noncanon-panel-row">
@@ -345,8 +367,9 @@ interface SlotColumnProps {
   ambiguous: Set<string>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  onDblClick: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, path: string, displayName: string, writable: boolean) => void;
   nonCanonMap: Map<string, NonCanonicalEntry>;
-  files: import("../types").FileEntry[];
 }
 
 function SlotColumn({
@@ -355,8 +378,9 @@ function SlotColumn({
   ambiguous,
   selectedId,
   onSelect,
+  onDblClick,
+  onContextMenu,
   nonCanonMap,
-  files,
 }: SlotColumnProps) {
   return (
     <div className="sim-column">
@@ -377,6 +401,8 @@ function SlotColumn({
               ambiguous={ambiguous}
               selected={selectedId === entry.file.id}
               onSelect={onSelect}
+              onDblClick={onDblClick}
+              onContextMenu={onContextMenu}
               nonCanonEntry={ncEntry}
             />
           );
@@ -393,10 +419,12 @@ interface SlotCardProps {
   ambiguous: Set<string>;
   selected: boolean;
   onSelect: (id: string) => void;
+  onDblClick: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, path: string, displayName: string, writable: boolean) => void;
   nonCanonEntry?: NonCanonicalEntry;
 }
 
-function SlotCard({ entry, ambiguous, selected, onSelect, nonCanonEntry }: SlotCardProps) {
+function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextMenu, nonCanonEntry }: SlotCardProps) {
   const { file, step } = entry;
   const label = displayLabel(file, ambiguous);
   const status: LoadStatus = step?.status ?? "orphan";
@@ -404,17 +432,29 @@ function SlotCard({ entry, ambiguous, selected, onSelect, nonCanonEntry }: SlotC
 
   const isNonCanon = !!nonCanonEntry;
 
+  // AGENTS.md orphan note: show a hint when the file is AGENTS.md without
+  // a matching @AGENTS.md import (meaning Claude won't auto-load it).
+  const basename = file.path.split("/").pop() ?? "";
+  const isAgentsMd = file.kind === "claude_md" && basename === "AGENTS.md";
+
   // Tooltip anchor state.
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const glyphRef = useRef<HTMLSpanElement | null>(null);
 
   const handleClick = () => { onSelect(file.id); };
+  const handleDblClick = () => { onDblClick(file.path); };
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const displayName = file.display_name ?? basename;
+    onContextMenu(e, file.path, displayName, file.writable ?? true);
+  };
 
   return (
     <div
       className={`sim-card${selected ? " selected" : ""}${isNonCanon ? " non-canonical" : ""}`}
       onClick={handleClick}
-      onDoubleClick={handleClick}
+      onDoubleClick={handleDblClick}
+      onContextMenu={handleContextMenu}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
@@ -459,6 +499,11 @@ function SlotCard({ entry, ambiguous, selected, onSelect, nonCanonEntry }: SlotC
         <span>{formatBytes(file.size_bytes)}</span>
         <span>{file.line_count} ln</span>
       </div>
+      {isAgentsMd && (
+        <div className="sim-card-agents-note">
+          Not auto-loaded — needs <code>@AGENTS.md</code> in CLAUDE.md
+        </div>
+      )}
     </div>
   );
 }
@@ -492,16 +537,16 @@ function AllCwdsTable({
   loading,
   onCellClick,
 }: AllCwdsTableProps) {
-  if (loading || (cwdList.length > 0 && allCwdSim.size === 0)) {
-    return (
-      <div className="sim-allcwds-loading">
-        <span>Loading all cwds…</span>
-      </div>
-    );
-  }
+  // Always render all rows — show faint placeholders when data hasn't loaded yet.
+  // A fixed-height matrix is more predictable for the user than rows collapsing
+  // in/out as data arrives. (Mission anchor: fixed-height over accordion.)
+  const dataReady = !loading && allCwdSim.size > 0;
 
   return (
     <div className="sim-allcwds-wrap">
+      {loading && (
+        <div className="sim-allcwds-loading-banner">Loading…</div>
+      )}
       <table className="sim-allcwds-table">
         <thead>
           <tr>
@@ -513,8 +558,8 @@ function AllCwdsTable({
         </thead>
         <tbody>
           {cwdList.map((entry) => {
-            const sim = allCwdSim.get(entry.path);
-            const nc = allCwdNonCanon.get(entry.path) ?? [];
+            const sim = dataReady ? allCwdSim.get(entry.path) : undefined;
+            const nc = dataReady ? (allCwdNonCanon.get(entry.path) ?? []) : [];
             const ncPaths = new Set(nc.map((e) => e.file_path));
             return (
               <AllCwdsRow
@@ -522,6 +567,7 @@ function AllCwdsTable({
                 entry={entry}
                 sim={sim}
                 ncPaths={ncPaths}
+                placeholder={!dataReady}
                 onCellClick={onCellClick}
               />
             );
@@ -538,10 +584,11 @@ interface AllCwdsRowProps {
   entry: CwdEntry;
   sim: SimulatorResponse | undefined;
   ncPaths: Set<string>;
+  placeholder: boolean;
   onCellClick: (cwd: string) => void;
 }
 
-function AllCwdsRow({ entry, sim, ncPaths, onCellClick }: AllCwdsRowProps) {
+function AllCwdsRow({ entry, sim, ncPaths, placeholder, onCellClick }: AllCwdsRowProps) {
   // Count files per slot from the sim steps.
   const slotCounts: Record<SlotKey, number> = {
     managed: 0, user: 0, ancestor: 0, project: 0, automemory: 0, ondemand: 0,
@@ -568,6 +615,11 @@ function AllCwdsRow({ entry, sim, ncPaths, onCellClick }: AllCwdsRowProps) {
         <span className="sim-allcwds-cwd-label">{entry.display}</span>
       </td>
       {SLOT_ORDER.map((slot) => {
+        if (placeholder) {
+          return (
+            <td key={slot} className="sim-allcwds-cell sim-allcwds-cell-placeholder" />
+          );
+        }
         const count = slotCounts[slot];
         const hasNc = slotNc[slot] > 0;
         const isEmpty = count === 0;

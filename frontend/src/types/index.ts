@@ -114,6 +114,7 @@ export interface UiState {
   map_mode?: MapMode;
   inspector_open?: boolean;
   simulator_mode?: SimulatorMode;
+  editor_open?: boolean;
 }
 
 // --- Non-canonical endpoint -----------------------------------------------
