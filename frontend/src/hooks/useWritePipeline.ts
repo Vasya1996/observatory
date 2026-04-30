@@ -135,8 +135,10 @@ export function useWritePipeline() {
             kind: "error",
             message:
               status === 409
-                ? `Write conflict: ${reason}`
-                : `Write failed: ${reason}`,
+                ? "Couldn't save — the file was changed somewhere else, please reload"
+                : status === 404 && reason.includes("expired")
+                  ? "This took too long — please try again"
+                  : `Save failed: ${reason}`,
           });
           return { ok: false, reason };
         }

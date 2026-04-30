@@ -8,6 +8,8 @@
  * On failure: rollback called, plain-language toast shown.
  *
  * Also used as the confirm step for DnD drops (prefilledMode skips step 1).
+ * After a successful commit, calls onCommitted with snapshot data so the
+ * caller can persist the migration-verified card state (7-day undo affordance).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -19,6 +21,16 @@ import {
 } from "../api/client";
 import { useStore } from "../state/store";
 import type { NonCanonicalEntry } from "../types";
+
+export interface MigrationCommitData {
+  migrationId: string;
+  timestamp: number;
+  sourcePath: string;
+  simDiff: { added: string[]; removed: string[]; hashChanged: string[] };
+  contentIdentity: "exact" | "substring" | "fail";
+  snapshots: { path: string; snapshotId: string }[];
+  cwdPath: string;
+}
 
 function collapseHome(p: string): string {
   return p.replace(/^\/home\/[^/]+\//, "~/").replace(/^\/home\/[^/]+$/, "~");
@@ -35,6 +47,10 @@ export interface NormalizeWizardProps {
   /** When set, skips step 1 and uses this mode. */
   prefilledMode?: NormalizeMode | null;
   onClose: () => void;
+  /** Called after successful commit with snapshot data for the verified card. */
+  onCommitted?: (data: MigrationCommitData) => void;
+  /** The active cwd for the verified card's cwd-match logic. */
+  activeCwd?: string;
 }
 
 // Diff row shapes — same visual language as DiffModal.
@@ -66,12 +82,12 @@ function ciColor(ci: string): string {
 }
 
 function ciText(ci: string): string {
-  if (ci === "exact") return "Content match: exact copy";
-  if (ci === "substring") return "Content match: all sections present in target";
-  return "Content match: could not verify — review the diff carefully";
+  if (ci === "exact") return "Content: exact copy — nothing lost";
+  if (ci === "substring") return "Content: all sections found in target";
+  return "Content: could not verify — please review the diff carefully";
 }
 
-export function NormalizeWizardModal({ entry, prefilledMode, onClose }: NormalizeWizardProps) {
+export function NormalizeWizardModal({ entry, prefilledMode, onClose, onCommitted, activeCwd }: NormalizeWizardProps) {
   const pushToast = useStore((s) => s.pushToast);
 
   const [step, setStep] = useState<1 | 2>(prefilledMode ? 2 : 1);
@@ -120,11 +136,32 @@ export function NormalizeWizardModal({ entry, prefilledMode, onClose }: Normaliz
     if (!preview) return;
     setApplying(true);
     try {
-      for (const token of preview.tokens) {
-        await postWrite(token);
+      const snapshots: { path: string; snapshotId: string }[] = [];
+      for (let i = 0; i < preview.tokens.length; i++) {
+        const res = await postWrite(preview.tokens[i]);
+        const fc = preview.plan.files_changed[i];
+        if (fc && res.snapshot_id) {
+          snapshots.push({ path: fc.path, snapshotId: res.snapshot_id });
+        }
       }
       await postMigrateFinalize(preview.migration_id, "commit");
       pushToast({ kind: "success", message: "File moved successfully." });
+      if (onCommitted) {
+        const sd = preview.plan.sim_diff;
+        onCommitted({
+          migrationId: preview.migration_id,
+          timestamp: Date.now(),
+          sourcePath: entry.file_path,
+          simDiff: {
+            added: sd?.added ?? [],
+            removed: sd?.removed ?? [],
+            hashChanged: sd?.hash_changed ?? [],
+          },
+          contentIdentity: preview.plan.content_identity,
+          snapshots,
+          cwdPath: activeCwd ?? "",
+        });
+      }
       onClose();
     } catch (e) {
       try { await postMigrateFinalize(preview.migration_id, "rollback"); } catch { /* best-effort */ }
@@ -136,7 +173,7 @@ export function NormalizeWizardModal({ entry, prefilledMode, onClose }: Normaliz
     } finally {
       setApplying(false);
     }
-  }, [preview, pushToast, onClose]);
+  }, [preview, pushToast, onClose, onCommitted, entry.file_path, activeCwd]);
 
   const handleVeilClick = (e: React.MouseEvent) => {
     if (e.target === veilRef.current) onClose();
@@ -321,13 +358,13 @@ function Step2({ mode, loading, previewErr, preview, deleteOriginal, setDeleteOr
             </label>
             <label
               className="normalize-tier2-row"
-              title="Not available on this Claude version — Tier 2 deferred"
+              title="Deep checks require a newer Claude Code version"
             >
               <span className="normalize-tier2-label">
                 <input type="checkbox" disabled checked={false} readOnly />
-                Deep verify after moving (not available on this Claude version)
+                Live probe after moving (not available on this Claude version)
               </span>
-              <span className="normalize-tier2-note">Tier 1 checks are running — the move is still safe.</span>
+              <span className="normalize-tier2-note">Fast checks are running — the move is still safe.</span>
             </label>
           </>
         )}
@@ -335,7 +372,7 @@ function Step2({ mode, loading, previewErr, preview, deleteOriginal, setDeleteOr
 
       <footer className="modal-foot">
         <span className="note">
-          {applying ? "Applying…" : "Snapshot saved before every write"}
+          {applying ? "Moving file…" : "A backup copy is saved before every change."}
         </span>
         <div className="actions">
           <button type="button" className="btn ghost" onClick={onCancel} disabled={applying}>Cancel</button>
@@ -398,7 +435,7 @@ function Tier1Cards({ plan }: { plan: MigratePlan }) {
   const sd = plan.sim_diff;
   return (
     <div className="normalize-tier1">
-      <div className="normalize-tier1-head">Checks before applying</div>
+      <div className="normalize-tier1-head">Fast checks before applying</div>
 
       {sd && (
         <div className="normalize-tier1-row">

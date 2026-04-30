@@ -236,8 +236,8 @@ export function DiffModal() {
         <footer className="modal-foot">
           <span className="note">
             {busy
-              ? "Applying patches…"
-              : "Backup snapshot saved to ~/.claude/.observatory/snapshots/"}
+              ? "Saving…"
+              : "A backup copy is saved before every change."}
           </span>
           <div className="actions">
             <button

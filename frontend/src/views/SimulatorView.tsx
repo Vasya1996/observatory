@@ -5,6 +5,8 @@ import { EditorPanel } from "../components/EditorPanel";
 import { ContextMenu } from "../components/ContextMenu";
 import type { ContextMenuTarget } from "../components/ContextMenu";
 import { NormalizeWizardModal, type NormalizeMode } from "../components/NormalizeWizardModal";
+import { MigrationVerifiedCard, persistMigrationCard } from "../components/MigrationVerifiedCard";
+import type { MigrationCommitData } from "../components/NormalizeWizardModal";
 import { fetchCwds, fetchNonCanonical, fetchSimulate, postSuppress } from "../api/client";
 import { useStore } from "../state/store";
 import {
@@ -30,9 +32,9 @@ const TOKENS_PER_LINE = 12;
 const TIER2_BANNER_KEY = "observatory_tier2_banner_dismissed";
 
 function humaniseReason(reason: string): string {
-  if (reason === "loaded_via_at_import") return "loaded via @-import";
-  if (reason === "outside_canonical_dir") return "outside canonical directory";
-  if (reason === "wrong_filename_at_canonical_path") return "wrong filename at canonical path";
+  if (reason === "loaded_via_at_import") return "Loaded by reference (@-import)";
+  if (reason === "outside_canonical_dir") return "File is outside the expected folder";
+  if (reason === "wrong_filename_at_canonical_path") return "Filename not recognised at this location";
   return reason.replace(/_/g, " ");
 }
 
@@ -89,6 +91,8 @@ export function SimulatorView() {
   // Normalize wizard state.
   const [normalizeEntry, setNormalizeEntry] = useState<NonCanonicalEntry | null>(null);
   const [normalizePrefilledMode, setNormalizePrefilledMode] = useState<NormalizeMode | null>(null);
+  // Bump to force MigrationVerifiedCard to re-read localStorage after a commit.
+  const [cardKey, setCardKey] = useState(0);
 
   // Glob prompt for DnD into On-demand (not wired in this commit — shown as future).
   const [globPromptEntry, setGlobPromptEntry] = useState<NonCanonicalEntry | null>(null);
@@ -260,6 +264,13 @@ export function SimulatorView() {
     }
   }, [lastCwd]);
 
+  const handleMigrationCommitted = useCallback((data: MigrationCommitData) => {
+    persistMigrationCard(data);
+    setCardKey((k) => k + 1);
+    setNormalizeEntry(null);
+    setNormalizePrefilledMode(null);
+  }, []);
+
   // DnD handlers at slot-column level.
   const handleDndDrop = useCallback((srcEntry: SlottedFile, dstSlot: SlotKey) => {
     const ncEntry = nonCanonMap.get(srcEntry.file.path);
@@ -291,7 +302,7 @@ export function SimulatorView() {
             <InfoIcon size={14} />
           </span>
           <span className="sim-tier2-banner-text">
-            Deep verification (Tier 2) is not available on this Claude version. Tier 1 checks are running — file moves are still safe.
+            Deep checks (live probe) are not available on this Claude version. Fast checks are running — file moves are still safe.
           </span>
           <button
             type="button"
@@ -316,8 +327,8 @@ export function SimulatorView() {
               <b>~{stats ? Math.round(stats.est_tokens / 1000) : "—"}k</b>&thinsp;tokens
             </span>
             {(stats?.conditional_matches ?? 0) > 0 && (
-              <span className="sim-stat-chip">
-                <b>{stats!.conditional_matches}</b>&thinsp;conditional
+              <span className="sim-stat-chip" title="Rules that may load depending on which files Claude opens">
+                <b>{stats!.conditional_matches}</b>&thinsp;may load
               </span>
             )}
             <span className="sim-stat-chip">
@@ -337,10 +348,10 @@ export function SimulatorView() {
               type="button"
               className={`sim-noncanon-badge sim-noncanon-badge-btn${panelOpen ? " open" : ""}`}
               onClick={() => setPanelOpen((v) => !v)}
-              title="Files at non-canonical paths"
+              title="These files are in unusual locations — Claude may not load them as expected"
             >
               <AlertTriangleIcon size={11} />
-              {nonCanonCount}&thinsp;at non-canonical paths
+              {nonCanonCount}&thinsp;file{nonCanonCount !== 1 ? "s" : ""} in unusual locations
             </button>
             {panelOpen && (
               <NonCanonPanel
@@ -355,6 +366,13 @@ export function SimulatorView() {
           </div>
         )}
       </div>
+
+      {/* Migration-verified card — shown when a migration was committed recently */}
+      {simulatorMode === "per-cwd" && (
+        <div className="sim-verified-wrap">
+          <MigrationVerifiedCard key={cardKey} activeCwd={lastCwd} />
+        </div>
+      )}
 
       {/* Body */}
       {simulatorMode === "per-cwd" ? (
@@ -395,6 +413,8 @@ export function SimulatorView() {
           entry={normalizeEntry}
           prefilledMode={normalizePrefilledMode}
           onClose={() => { setNormalizeEntry(null); setNormalizePrefilledMode(null); }}
+          onCommitted={handleMigrationCommitted}
+          activeCwd={lastCwd ?? undefined}
         />
       )}
 
@@ -430,7 +450,7 @@ interface NonCanonPanelProps {
 
 function NonCanonPanel({ entries, files, suppressed, onOpen, onNormalize, onSuppress }: NonCanonPanelProps) {
   return (
-    <div className="sim-noncanon-panel" role="dialog" aria-label="Non-canonical files">
+    <div className="sim-noncanon-panel" role="dialog" aria-label="Files in unusual locations">
       {/* Suppressed banner */}
       {suppressed && (
         <div className="sim-noncanon-suppressed-banner">
@@ -446,7 +466,7 @@ function NonCanonPanel({ entries, files, suppressed, onOpen, onNormalize, onSupp
       )}
 
       <div className="sim-noncanon-panel-head">
-        <span>files at non-canonical paths</span>
+        <span>files in unusual locations</span>
         <span style={{ color: "var(--amber)" }}>{entries.length}</span>
       </div>
       <ul className="sim-noncanon-panel-list">
@@ -634,7 +654,7 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleClick(); }
       }}
-      aria-label={`${label} — ${status}${isNonCanon ? " (at non-canonical path)" : ""}`}
+      aria-label={`${label} — ${status}${isNonCanon ? " (in unusual location)" : ""}`}
       aria-pressed={selected}
     >
       {isNonCanon && (
@@ -643,7 +663,7 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
           className="sim-card-noncanon-glyph"
           onMouseEnter={() => setTooltipVisible(true)}
           onMouseLeave={() => setTooltipVisible(false)}
-          aria-label="At non-canonical path"
+          aria-label="File is in an unusual location"
         >
           <AlertTriangleIcon size={12} />
           {tooltipVisible && nonCanonEntry && (
@@ -655,7 +675,7 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
                   {nonCanonEntry.importer_line ? `:${nonCanonEntry.importer_line}` : ""}
                 </div>
               )}
-              <div><b>Canonical place:</b> {collapseHome(nonCanonEntry.canonical_path)}</div>
+              <div><b>Expected location:</b> {collapseHome(nonCanonEntry.canonical_path)}</div>
             </div>
           )}
         </span>
@@ -682,9 +702,9 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
           type="button"
           className="sim-card-normalize-btn"
           onClick={(e) => { e.stopPropagation(); onNormalize(); }}
-          title="Move this file to its canonical location"
+          title="Move this file to the right location"
         >
-          Normalize…
+          Move file…
         </button>
       )}
 
@@ -703,9 +723,9 @@ function StatusChip({ status }: { status: LoadStatus }) {
   const cls = `sim-status-chip sim-status-${status}`;
   const label =
     status === "loaded" ? "loaded"
-    : status === "conditional" ? "conditional"
-    : status === "skipped" ? "skipped"
-    : "orphan";
+    : status === "conditional" ? "may load"
+    : status === "skipped" ? "available on demand"
+    : "not loaded";
   return <span className={cls}>{label}</span>;
 }
 

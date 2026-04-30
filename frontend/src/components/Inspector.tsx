@@ -84,10 +84,10 @@ const SEVERITY_COLOR: Record<Issue["severity"], string> = {
 
 const STATUS_LABEL: Record<LoadStatus, string> = {
   loaded: "loaded",
-  conditional: "conditional",
-  skipped: "on-demand",
-  orphan: "orphan",
-  unknown: "no cwd",
+  conditional: "may load",
+  skipped: "available on demand",
+  orphan: "not loaded",
+  unknown: "no project selected",
 };
 
 const STATUS_COLOR: Record<LoadStatus, string> = {
@@ -530,7 +530,7 @@ function KindLead({
           ))}
         </div>
         {file.paths_status === "missing" && (
-          <div className="insp-hint rust">← out of scope (paths_status=missing)</div>
+          <div className="insp-hint rust">← no matching files found for these patterns</div>
         )}
       </section>
     );
@@ -631,14 +631,14 @@ function KindHints({ kind }: { kind: FileKind }) {
   if (kind === "automemory") {
     return (
       <div className="insp-hint">
-        Read-only — managed by Claude Code.
+        Read-only — Claude Code manages this file automatically.
       </div>
     );
   }
   if (kind === "script") {
     return (
       <div className="insp-hint">
-        Hook target — edit Claude Code settings to change.
+        This script runs when a hook fires. Edit Claude Code settings to change it.
       </div>
     );
   }
