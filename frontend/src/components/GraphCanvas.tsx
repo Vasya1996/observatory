@@ -31,21 +31,6 @@ interface Props {
   // overlay disabled). Optional; when null the graph renders kind-only colors
   // as before.
   statusMap?: Map<string, string> | null;
-  // Tree-mode position map. When provided AND non-empty, layout switches from
-  // cola to `preset` (locked rule #33) and each node is placed at the given
-  // {x,y}; nodes missing from the map fall back to (0,0). When null/undefined
-  // OR empty, cola runs as today. Per-node tweens between Map states are
-  // wired in a separate effect below.
-  positions?: Map<string, { x: number; y: number }> | null;
-  // Per-node zone assignment from buildTreePositions. Drives the tree-mode
-  // styling pass: orphan-zone fade, hook-edge gating to settings-internal,
-  // mention-edge "lianas" treatment. Null in graph mode (no zones).
-  zones?: Map<string, "user" | "project" | "settings" | "orphan"> | null;
-  // True when the parent is rendering the tree mode. Drives tree-only style
-  // overrides via class selectors (`.tree-mode` on every node + edge). Kept
-  // as an explicit prop because `positions?.size > 0` is technically the same
-  // signal but reads less clearly at the call site.
-  treeMode?: boolean;
 }
 
 // Tokens (kept here for cytoscape — JS can't read CSS variables on raw canvas styles).
@@ -125,9 +110,6 @@ export function GraphCanvas({
   onHoverNode,
   onDblClick,
   statusMap,
-  positions,
-  zones,
-  treeMode,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
@@ -151,15 +133,6 @@ export function GraphCanvas({
   // Latest onDblClick in a ref — same pattern as onHoverEdge.
   const onDblClickRef = useRef(onDblClick);
   onDblClickRef.current = onDblClick;
-
-  // Latest tree-mode positions in a ref so the construction effect can read
-  // the initial map without listing `positions` as a dependency (locked rule
-  // #33: NO restructuring of the construction effect; treat tree mode as a
-  // layout-config branch, not a rebuild trigger). The transition between
-  // graph and tree happens in a separate effect via `cy.animate`.
-  const positionsRef = useRef(positions ?? null);
-  positionsRef.current = positions ?? null;
-
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -430,105 +403,25 @@ export function GraphCanvas({
           selector: ".folded",
           style: { display: "none" },
         },
-        // -----------------------------------------------------------------
-        // Tree-mode overrides (locked rule #34). Activated by toggling the
-        // `.tree-mode` class on every node + edge (handled by the dedicated
-        // effect below; class is removed when treeMode flips back to false).
-        //
-        // Mentions read as thin teal "lianas" connecting CLAUDE.md trunks
-        // across zones — unbundled-bezier so neighbouring mentions arc
-        // independently instead of stacking onto one straight line.
-        // -----------------------------------------------------------------
-        {
-          selector: 'edge[kind = "mention"].tree-mode',
-          style: {
-            "line-color": C.teal,
-            width: 1.2,
-            "curve-style": "unbundled-bezier",
-            "control-point-distances": [-30],
-            "control-point-weights": [0.5],
-            opacity: 0.4,
-          },
-        },
-        // Imports stay solid amber but sit a touch brighter than mentions so
-        // the user-zone @-import spine reads as the primary structure.
-        {
-          selector: 'edge[kind = "import"].tree-mode',
-          style: {
-            opacity: 0.7,
-          },
-        },
-        // Hook edges: only render when both endpoints landed in the settings
-        // zone. Cross-zone hooks (e.g. a settings.json hook to a script that
-        // ended up in orphan) become noise in tree mode — display: none
-        // suppresses both the edge and its label.
-        {
-          selector: 'edge[kind = "hook"].tree-mode.hook-cross-zone',
-          style: { display: "none" },
-        },
-        // Hook edges that survive (settings → settings) get the planned rose
-        // dashed treatment; the dashed pattern reinforces "trigger" semantics
-        // without recolouring the whole zone.
-        {
-          selector: 'edge[kind = "hook"].tree-mode:not(.hook-cross-zone)',
-          style: {
-            "line-style": "dashed",
-            opacity: 0.85,
-          },
-        },
-        // Orphan-zone nodes: faded so the user zooms in on the connected
-        // trunks; the orphan strip reads as "still here, just unreachable".
-        // Labels suppressed (set text-opacity: 0) since the strip is dense
-        // enough that overlapping labels would be unreadable noise.
-        {
-          selector: "node.zone-orphan",
-          style: {
-            opacity: 0.5,
-            "text-opacity": 0,
-          },
-        },
       ],
-      // Initial layout: cola for graph mode, `preset` for tree mode (when a
-      // non-empty position map was provided). Locked rule #33: this is the
-      // ONLY branch — the rest of the useEffect treats every node uniformly
-      // regardless of layout mode.
-      layout:
-        positionsRef.current && positionsRef.current.size > 0
-          ? ({
-              name: "preset",
-              fit: true,
-              padding: 30,
-              // cytoscape's preset layout calls this with the actual NodeSingular
-              // at runtime — TS types claim `(nodeid: string)`, but the source
-              // (`preset.mjs`: `options.positions(node)`) passes the node. Cast
-              // to any to keep both worlds happy.
-              positions: ((n: cytoscape.NodeSingular) =>
-                positionsRef.current?.get(n.id()) ?? { x: 0, y: 0 }) as unknown as (
-                id: string,
-              ) => cytoscape.Position,
-            } as cytoscape.LayoutOptions)
-          : ({
-              name: "cola",
-              animate: false,
-              infinite: false,
-              fit: false,
-              nodeSpacing: 16,
-              edgeLength: 110,
-              randomize: Object.keys(initialPins).length === 0,
-              maxSimulationTime: 1500,
-            } as cytoscape.LayoutOptions),
+      layout: {
+        name: "cola",
+        animate: false,
+        infinite: false,
+        fit: false,
+        nodeSpacing: 16,
+        edgeLength: 110,
+        randomize: Object.keys(initialPins).length === 0,
+        maxSimulationTime: 1500,
+      } as cytoscape.LayoutOptions,
     });
 
     // Snap initially-persisted pins to their saved positions. The .pinned
     // class is functional (drag-time neighbour filter), not visual — the
-    // pushpin glyph lives in <PinOverlay>. Skipped in tree mode: pins are a
-    // graph-mode UX, and their saved positions would clobber the preset
-    // layout we just applied.
-    if (!(positionsRef.current && positionsRef.current.size > 0)) {
-      for (const [id, pos] of Object.entries(initialPins)) {
-        const n = cy.getElementById(id);
-        if (n.nonempty()) n.position(pos).addClass("pinned");
-      }
+    // pushpin glyph lives in <PinOverlay>.
+    for (const [id, pos] of Object.entries(initialPins)) {
+      const n = cy.getElementById(id);
+      if (n.nonempty()) n.position(pos).addClass("pinned");
     }
 
     // Post-layout: for each folder group, place the folder at the centroid
@@ -830,106 +723,6 @@ export function GraphCanvas({
       apply(prev);
     });
   }, []);
-
-  // Tree-mode class toggle. Applies `.tree-mode` to every node + edge so the
-  // dedicated style selectors (mention "lianas", import softening, hook
-  // gating) activate; tags each node with `zone-<name>`; tags hook edges that
-  // cross out of the settings zone with `.hook-cross-zone` so the stylesheet
-  // can hide them. Removed when treeMode is false. Class-based same as the
-  // status overlay — cytoscape's selector matcher is fast and we don't want
-  // to mutate the construction effect (locked rule #33).
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.batch(() => {
-      cy.elements().removeClass(
-        "tree-mode zone-user zone-project zone-settings zone-orphan hook-cross-zone",
-      );
-      if (!treeMode) return;
-      cy.elements().addClass("tree-mode");
-      cy.nodes().forEach((n) => {
-        if (n.data("kind") === "folder") return;
-        const z = zones?.get(n.id());
-        if (z) n.addClass(`zone-${z}`);
-      });
-      // Tag cross-zone hook edges so the stylesheet hides them. A hook is
-      // "cross-zone" when either endpoint is NOT in the settings zone.
-      cy.edges().forEach((e) => {
-        if (e.data("kind") !== "hook") return;
-        const sz = zones?.get(e.data("source"));
-        const tz = zones?.get(e.data("target"));
-        if (sz !== "settings" || tz !== "settings") {
-          e.addClass("hook-cross-zone");
-        }
-      });
-    });
-  }, [treeMode, zones]);
-
-  // Animate node positions when the tree-mode position map changes after the
-  // initial mount. Three transitions are handled:
-  //   * graph → tree    (null → Map):   tween every node to its new tree pos.
-  //   * tree → tree     (Map  → Map):   re-tween (e.g. cwd swap shifted nodes).
-  //   * tree → graph    (Map  → null):  re-run cola so nodes fall back to a
-  //                                     force-directed layout; cola animates
-  //                                     itself when `animate: true`.
-  // Skipped on the very first run because the construction effect already
-  // applied the layout. Locked rule #33 keeps this isolated from the cy
-  // construction so we don't tear down and rebuild on a tree/graph switch.
-  const lastPositionsRef = useRef<Map<string, { x: number; y: number }> | null>(
-    null,
-  );
-  const skipFirstAnimRef = useRef(true);
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    if (skipFirstAnimRef.current) {
-      skipFirstAnimRef.current = false;
-      lastPositionsRef.current = positions ?? null;
-      return;
-    }
-    const prev = lastPositionsRef.current;
-    const next = positions ?? null;
-    lastPositionsRef.current = next;
-    // No-op when both states represent "graph mode" (null/empty).
-    const prevHas = !!prev && prev.size > 0;
-    const nextHas = !!next && next.size > 0;
-    if (!prevHas && !nextHas) return;
-
-    if (nextHas) {
-      // Tween each known node to its target tree position. Step 3.2 fills
-      // every non-folder node into one of the four zones so the only nodes
-      // missing here are folder umbrellas (handled separately by the
-      // settle-folders pass) and any future kind we forget to assign.
-      cy.batch(() => {
-        cy.nodes().forEach((n) => {
-          if (n.data("kind") === "folder") return;
-          const target = next!.get(n.id());
-          if (!target) return;
-          n.animate(
-            { position: target },
-            { duration: 400, easing: "ease-in-out" },
-          );
-        });
-      });
-    } else {
-      // Tree → graph: stop any in-flight position tweens and re-run cola so
-      // the graph re-settles into its force-directed shape. `randomize: false`
-      // keeps the existing positions as a starting hint instead of throwing
-      // everything to (0,0).
-      cy.nodes().stop(true, true);
-      const layout = cy.layout({
-        name: "cola",
-        animate: true,
-        infinite: false,
-        fit: false,
-        nodeSpacing: 16,
-        edgeLength: 110,
-        randomize: false,
-        maxSimulationTime: 1500,
-      } as cytoscape.LayoutOptions);
-      layout.run();
-    }
-  }, [positions]);
 
   return (
     <div

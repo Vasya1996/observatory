@@ -7,7 +7,6 @@ import { IconOverlay } from "../components/IconOverlay";
 import { Inspector } from "../components/Inspector";
 import { PinOverlay } from "../components/PinOverlay";
 import { EdgeInfo } from "../components/EdgeInfo";
-import { TokenBudgetBar } from "../components/TokenBudgetBar";
 import { EditorPanel } from "../components/EditorPanel";
 import { ContextMenu } from "../components/ContextMenu";
 import { ErrorBoundary, EditorBoundary } from "../components/ErrorBoundary";
@@ -15,14 +14,7 @@ import type { ContextMenuTarget } from "../components/ContextMenu";
 import { fetchCwds, fetchNonCanonical, fetchSimulate } from "../api/client";
 import { useStore, EXPLORER_WIDTH_MIN, EXPLORER_WIDTH_MAX } from "../state/store";
 import { applyInternalFilter } from "../state/visibility";
-import { buildTreePositions, type ZoneMap } from "../tree/buildTreePositions";
 import type { Edge, LoadStatus, OrphanConfigEntry } from "../types";
-
-// Default canvas viewport size used by the tree builder when the actual
-// container has not laid out yet. Roughly matches the chrome-deducted
-// in-flight size; the preset layout's `fit: true` re-centers anyway, so
-// approximate values are fine.
-const FALLBACK_VIEWPORT = { width: 1600, height: 900 };
 
 export function MapView() {
   const files = useStore((s) => s.files);
@@ -30,7 +22,6 @@ export function MapView() {
   const showInternal = useStore((s) => s.showInternal);
   const lastCwd = useStore((s) => s.lastCwd);
   const setLastCwd = useStore((s) => s.setLastCwd);
-  const mapMode = useStore((s) => s.mapMode);
   const explorerWidth = useStore((s) => s.explorerWidth);
   const setExplorerWidth = useStore((s) => s.setExplorerWidth);
   const [cy, setCy] = useState<cytoscape.Core | null>(null);
@@ -42,7 +33,6 @@ export function MapView() {
   // when the graph emits obs:graph-hover-node events.
   const explorerRef = useRef<HTMLElement | null>(null);
 
-  const treeMode = mapMode === "tree";
   const inspectorOpen = useStore((s) => s.inspectorOpen);
   const editorOpen = useStore((s) => s.editorOpen);
   const setEditorOpen = useStore((s) => s.setEditorOpen);
@@ -57,11 +47,8 @@ export function MapView() {
 
   // When the Inspector or EditorPanel slides in/out, the canvas width changes.
   // Cytoscape's auto-resize observer picks up the size change and reflows
-  // its internal viewport, but in tree mode the layout was applied as a
-  // one-shot preset — without a follow-up `cy.fit()` the tree zones stay at
-  // their pre-resize coordinates and run off-edge. We trigger fit on every
-  // toggle, in both modes (graph mode benefits too: a re-fit re-centers the
-  // cluster nicely in the now-narrower viewport). 220ms timeout matches the
+  // its internal viewport. We trigger fit on every toggle so the cluster
+  // re-centers in the now-narrower viewport. 220ms timeout matches the
   // 200ms slide animation + a small buffer so the final size is settled.
   useEffect(() => {
     if (!cy) return;
@@ -81,9 +68,8 @@ export function MapView() {
     cy.resize();
   }, [cy, explorerWidth]);
 
-  // Auto-pick the first available cwd when none is set. Tree mode otherwise
-  // renders an empty user-zone placeholder until the user opens the picker;
-  // pre-filling lets it show real content on first load.
+  // Auto-pick the first available cwd when none is set so the status overlay
+  // and explorer show real content on first load.
   useEffect(() => {
     if (lastCwd) return;
     let cancelled = false;
@@ -144,20 +130,6 @@ export function MapView() {
       });
     return () => { cancelled = true; };
   }, [lastCwd]);
-
-  // Tree-mode positions.
-  const layout = useMemo(() => {
-    if (!treeMode) return null;
-    return buildTreePositions(
-      visibleFiles,
-      visibleEdges,
-      lastCwd,
-      statusMap,
-      FALLBACK_VIEWPORT,
-    );
-  }, [treeMode, visibleFiles, visibleEdges, lastCwd, statusMap]);
-  const positions = layout?.positions ?? null;
-  const zones: ZoneMap | null = layout?.zones ?? null;
 
   const handleDblClick = useCallback((path: string) => {
     setEditorOpen(path, true);
@@ -285,17 +257,11 @@ export function MapView() {
             onHoverEdge={setHoveredEdge}
             onDblClick={handleDblClick}
             statusMap={statusMap}
-            positions={positions}
-            zones={zones}
-            treeMode={treeMode}
           />
           <IconOverlay cy={cy} />
-          {/* Locked rule #33: PinOverlay is graph-mode only. */}
-          <PinOverlay cy={treeMode ? null : cy} />
+          <PinOverlay cy={cy} />
           <CwdSelector />
           <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
-          {treeMode && <TokenBudgetBar zones={zones} />}
-          {treeMode && <ZoneLabels />}
         </ErrorBoundary>
       </div>
       <ErrorBoundary label="Inspector">
@@ -377,31 +343,3 @@ function ResizeDivider({ explorerWidth, onResize }: ResizeDividerProps) {
   );
 }
 
-// Corner labels marking the tree-mode sub-zones.
-function ZoneLabels() {
-  const base: React.CSSProperties = {
-    position: "absolute",
-    color: "var(--paper-faint)",
-    letterSpacing: "0.18em",
-    fontSize: "10px",
-    fontFamily: '"JetBrains Mono", monospace',
-    textTransform: "uppercase",
-  };
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        pointerEvents: "none",
-        zIndex: 6,
-      }}
-      aria-hidden
-    >
-      <div style={{ ...base, top: 88, left: 16 }}>user layer</div>
-      <div style={{ ...base, top: 88, right: 16 }}>project layer</div>
-      <div style={{ ...base, bottom: 16, left: "50%", transform: "translateX(-50%)" }}>
-        settings layer
-      </div>
-    </div>
-  );
-}

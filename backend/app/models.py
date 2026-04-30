@@ -165,10 +165,6 @@ class UiState(BaseModel):
     # which is a registry whose contents are already represented by the plugin
     # nodes themselves. Toggle in HeaderChrome restores them.
     show_internal: bool = False
-    # Sub-mode of the Map view: "graph" = current cola force-layout, "tree" =
-    # radial three-zone tree (user-side / project-side / settings-side) showing
-    # Claude Code's real load hierarchy. Persisted so the toggle survives reloads.
-    map_mode: Literal["graph", "tree"] = "graph"
     # Whether the slide-in Inspector pane is currently open. Mounted on Map +
     # Simulator views; clicking a node auto-opens it, the close button (×)
     # tucks it away. Persisted so the layout survives reloads and the canvas

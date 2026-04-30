@@ -17,8 +17,6 @@ export type EdgeKind = "import" | "mention" | "hook";
 
 export type ViewKey = "map" | "sim" | "ed" | "ext";
 
-export type MapMode = "graph" | "tree";
-
 export type SimulatorMode = "per-cwd" | "all-cwds";
 
 export interface Issue {
@@ -111,7 +109,6 @@ export interface UiState {
   last_cwd: string | null;
   last_view: ViewKey | null;
   show_internal?: boolean;
-  map_mode?: MapMode;
   inspector_open?: boolean;
   simulator_mode?: SimulatorMode;
   editor_open?: boolean;

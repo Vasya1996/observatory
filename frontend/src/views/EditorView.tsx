@@ -7,7 +7,7 @@ export function EditorView() {
           Open a file from the Map or Simulator to view and edit it here.
         </p>
         <p className="stub-note">
-          Double-click any node in Map (01a / 01b) or any card in Simulator (02a)
+          Double-click any node in Map (01a) or any card in Simulator (02a)
           to open the editor panel on the left side of the screen.
         </p>
       </div>
