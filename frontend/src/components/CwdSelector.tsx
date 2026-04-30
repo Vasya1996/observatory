@@ -151,7 +151,7 @@ export function CwdSelector() {
         }}
       >
         <Reticle aimed={aimed} />
-        <span className="cwd-target-label">cwd</span>
+        <span className="cwd-target-label">Folder</span>
         <span className="cwd-target-divider" aria-hidden>
           ·
         </span>

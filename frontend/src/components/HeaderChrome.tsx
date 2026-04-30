@@ -196,11 +196,11 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
             type="button"
             className={`pill mono toggle${showInternal ? " on" : ""}`}
             onClick={() => setShowInternal(!showInternal)}
-            title="Show Claude-Code-internal nodes that duplicate already-visible state"
+            title="Show Claude-Code-internal files that duplicate already-visible state"
           >
             internal · {showInternal ? "on" : "off"}
           </button>
-          <span className="pill mono">{fileCount} files · {edgeCount} edges</span>
+          <span className="pill mono">{fileCount} files · {edgeCount} connections</span>
         </div>
       </div>
     </header>
