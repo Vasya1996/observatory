@@ -98,15 +98,18 @@ function assignSlot(file: FileEntry, cwd: string | null, home: string): SlotKey 
 
   const dotClaude = home + "/.claude";
 
-  // 2. User-global
+  // 2. User-global (or on-demand if paths-scoped)
   if (
     p === dotClaude + "/CLAUDE.md" ||
-    p === dotClaude + "/" + "CLAUDE.md" ||
-    p.startsWith(dotClaude + "/rules/")
+    p === dotClaude + "/" + "CLAUDE.md"
   ) {
-    // Paths-scoped rules that have paths_globs are conditional (not always
-    // user-global), but they still load from the user zone — keep them here.
     return "user";
+  }
+  if (p.startsWith(dotClaude + "/rules/")) {
+    // Rules with paths_globs are conditionally loaded — they belong in
+    // On-demand, not User-global. Only truly always-loaded rules (no globs)
+    // stay in User-global.
+    return (file.paths_globs && file.paths_globs.length > 0) ? "ondemand" : "user";
   }
 
   // 5. Auto-memory (check before ancestor/project to catch ~/.claude/projects/…)
@@ -117,11 +120,11 @@ function assignSlot(file: FileEntry, cwd: string | null, home: string): SlotKey 
   // 4. Project — needs cwd
   if (cwd) {
     const cwdDotClaude = cwd + "/.claude";
-    if (
-      p === cwdDotClaude + "/CLAUDE.md" ||
-      p.startsWith(cwdDotClaude + "/rules/")
-    ) {
-      return "project";
+    if (p === cwdDotClaude + "/CLAUDE.md") return "project";
+    if (p.startsWith(cwdDotClaude + "/rules/")) {
+      // Paths-scoped project rules belong in On-demand for the same reason as
+      // user-global rules: they only load when a matching file is opened.
+      return (file.paths_globs && file.paths_globs.length > 0) ? "ondemand" : "project";
     }
   }
 
@@ -188,9 +191,9 @@ export function buildSlotMap(
     ondemand: [],
   };
 
-  // First pass: assign files from the simulate timeline (slots 1-5 priority).
-  // Track which ids land in a named slot so BFS-only entries don't duplicate.
-  const assignedInNamedSlot = new Set<string>();
+  // First pass: assign files from the simulate timeline.
+  // Track all ids placed in any slot so BFS-only entries don't duplicate.
+  const assignedAnySlot = new Set<string>();
 
   for (const id of simulatedIds) {
     const file = fileById.get(id);
@@ -198,12 +201,12 @@ export function buildSlotMap(
     const step = stepByFileId.get(id);
     const slot = assignSlot(file, cwd, home);
     result[slot].push({ file, step, slot });
-    if (slot !== "ondemand") assignedInNamedSlot.add(id);
+    assignedAnySlot.add(id);
   }
 
-  // Second pass: on-demand BFS results only if not already in a named slot.
+  // Second pass: on-demand BFS results only if not already placed above.
   for (const id of onDemandIds) {
-    if (assignedInNamedSlot.has(id)) continue;
+    if (assignedAnySlot.has(id)) continue;
     const file = fileById.get(id);
     if (!file) continue;
     result.ondemand.push({ file, step: undefined, slot: "ondemand" });
