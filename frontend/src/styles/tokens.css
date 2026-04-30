@@ -4171,6 +4171,26 @@ body {
   display: block;
   flex-shrink: 0;
 }
+/* "always loaded" state — non-interactive label for kinds that cannot be disabled */
+.explorer-autoload.always {
+  width: auto;
+  height: auto;
+  background: var(--paper-faint);
+  color: var(--ink);
+  border: none;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  flex-shrink: 0;
+  cursor: default;
+  display: inline-block;
+}
+.explorer-autoload.always::after {
+  content: "always loaded";
+  display: block;
+}
 /* pending state — dashed border indicates "wired but not yet active" */
 .explorer-autoload.pending {
   opacity: 0.5;

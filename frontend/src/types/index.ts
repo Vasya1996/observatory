@@ -50,6 +50,12 @@ export interface FileEntry {
   // False for read-only kinds (automemory / plugin_registry / plugin_manifest /
   // script). Defaults true so payloads from older backends still parse.
   writable?: boolean;
+  // Phase 4 autoload state covering all 5 mechanisms. Added by backend agent;
+  // absent in responses from older backend builds → fallback to paths_status heuristic.
+  // "on"  — file is currently autoloaded
+  // "off" — file is present but autoload is disabled
+  // "n/a" — file is always loaded by design (claude_md, automemory, etc.)
+  autoload_state?: "on" | "off" | "n/a";
 }
 
 export interface Edge {

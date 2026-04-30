@@ -501,15 +501,24 @@ function FileRow({
   const indent = 24 + depth * 14 + 14; // extra 14 for indent past folder chevron
   const iconPath = ICON_PATH_BY_KIND[node.kind] ?? null;
 
+  // autoload_state is the authoritative field once the backend delivers it.
+  // If absent (older backend build), fall back to the paths_status heuristic
+  // so rules behaviour doesn't regress while BE deploys.
+  const autoloadState = node.file.autoload_state;
+  const alwaysLoaded = autoloadState === "n/a";
   // Autoload toggle: rule and skill are the most common togglable kinds.
   // Other kinds return toggle_applicable: false from the backend.
-  const autoloadApplicable = node.kind !== "automemory" &&
+  // Also not interactive when backend explicitly says "n/a".
+  const autoloadApplicable = !alwaysLoaded &&
+    node.kind !== "automemory" &&
     node.kind !== "plugin_registry" &&
     node.kind !== "plugin_manifest" &&
     node.kind !== "script";
-  // "on" means currently loaded (not sentinel-disabled). Use paths_status as proxy:
-  // missing = the paths glob points nowhere → treat as off.
-  const autoloadOn = node.file.paths_status !== "missing";
+  // If autoload_state is present use it directly; otherwise fall back to the
+  // old paths_status proxy (missing = paths glob points nowhere → treat as off).
+  const autoloadOn = autoloadState !== undefined
+    ? autoloadState === "on"
+    : node.file.paths_status !== "missing";
 
   return (
     <div
@@ -561,12 +570,20 @@ function FileRow({
         </span>
       )}
 
-      <AutoloadToggle
-        path={node.path}
-        applicable={autoloadApplicable}
-        on={autoloadOn}
-        writable={node.file.writable ?? true}
-      />
+      {alwaysLoaded ? (
+        <span
+          className="explorer-autoload always"
+          title={typeof node.file.autoload_state === "string" ? "Always loaded — cannot be disabled through Observatory" : "Always loaded"}
+          aria-label="Always loaded"
+        />
+      ) : (
+        <AutoloadToggle
+          path={node.path}
+          applicable={autoloadApplicable}
+          on={autoloadOn}
+          writable={node.file.writable ?? true}
+        />
+      )}
     </div>
   );
 }
