@@ -13,6 +13,7 @@ import {
   buildSlotMap,
   SLOT_ORDER,
   SLOT_LABELS,
+  SLOT_DESCRIPTIONS,
   type SlotKey,
   type SlottedFile,
 } from "../simulator/slotAssign";
@@ -38,16 +39,19 @@ function humaniseReason(reason: string): string {
   return reason.replace(/_/g, " ");
 }
 
-function collapseHome(p: string): string {
-  if (p.startsWith("/home/voxdecaelo/")) return "~/" + p.slice("/home/voxdecaelo/".length);
+function collapseHome(p: string, home?: string): string {
+  const h = home ?? "";
+  if (h && p.startsWith(h + "/")) return "~/" + p.slice(h.length + 1);
+  if (h && p === h) return "~";
+  // Fallback: collapse any /home/<user>/ prefix.
+  const m = /^\/home\/[^/]+\/(.+)$/.exec(p);
+  if (m) return "~/" + m[1];
   return p;
 }
 
-// Determine which DnD migration mode to use given source and target slots.
-function dndMode(srcSlot: SlotKey, dstSlot: SlotKey): NormalizeMode | null {
+// Determine which DnD migration mode to use given the target slot.
+function dndMode(dstSlot: SlotKey): NormalizeMode | null {
   if (dstSlot === "ondemand") return null; // requires glob prompt — handled separately
-  if (dstSlot === "project") return "rule";
-  if (dstSlot === "user") return "rule";
   return "rule";
 }
 
@@ -205,6 +209,21 @@ export function SimulatorView() {
     return () => window.removeEventListener("mousedown", onDoc);
   }, [panelOpen]);
 
+  // Derive the user's home directory from the file index rather than hard-coding.
+  const derivedHome = useMemo(() => {
+    for (const f of files) {
+      if (f.display.startsWith("~/") && f.path.length > 2) {
+        const suffix = f.display.slice(1);
+        if (f.path.endsWith(suffix)) return f.path.slice(0, f.path.length - suffix.length);
+      }
+    }
+    for (const f of files) {
+      const m = /^(\/home\/[^/]+)\/.+/.exec(f.path);
+      if (m) return m[1];
+    }
+    return "/home";
+  }, [files]);
+
   const ambiguous = useMemo(() => computeAmbiguousBasenames(files), [files]);
   const slotMap = useMemo(
     () => buildSlotMap(steps, files, edges, lastCwd ?? null),
@@ -289,7 +308,7 @@ export function SimulatorView() {
       return;
     }
 
-    const mode = dndMode(srcEntry.slot, dstSlot);
+    const mode = dndMode(dstSlot);
     handleNormalize(entry, mode ?? "rule");
   }, [nonCanonMap, handleNormalize]);
 
@@ -302,7 +321,7 @@ export function SimulatorView() {
             <InfoIcon size={14} />
           </span>
           <span className="sim-tier2-banner-text">
-            Deep checks (live probe) are not available on this Claude version. Fast checks are running — file moves are still safe.
+            Live verification (checking that Claude actually loads the file after a move) requires a newer Claude version. Fast checks are still running — content and path integrity are verified before every move.
           </span>
           <button
             type="button"
@@ -399,6 +418,7 @@ export function SimulatorView() {
           allCwdSim={allCwdSim}
           allCwdNonCanon={allCwdNonCanon}
           loading={allCwdLoading}
+          home={derivedHome}
           onCellClick={handleCellClick}
         />
       )}
@@ -423,12 +443,8 @@ export function SimulatorView() {
         <GlobPromptModal
           entry={globPromptEntry}
           onClose={() => setGlobPromptEntry(null)}
-          onConfirm={(globs) => {
+          onConfirm={(_globs) => {
             setGlobPromptEntry(null);
-            // Wire: open normalize wizard with on-demand semantics.
-            // For now we open in rule mode; the paths: field would be added
-            // in a follow-up once the wizard supports it.
-            void globs; // suppress unused-var
             handleNormalize(globPromptEntry, "rule");
           }}
         />
@@ -554,9 +570,7 @@ function SlotColumn({
     if (!raw) return;
     try {
       const srcEntry: SlottedFile = JSON.parse(raw);
-      // Don't drop onto the same slot.
       if (srcEntry.slot === slotKey) return;
-      // Managed slot is read-only.
       if (srcEntry.slot === "managed") return;
       onDrop(srcEntry, slotKey);
     } catch { /* malformed drag data */ }
@@ -570,12 +584,15 @@ function SlotColumn({
       onDrop={handleDrop}
     >
       <div className="sim-col-header">
-        <span className="sim-col-name">{SLOT_LABELS[slotKey]}</span>
-        <span className="sim-col-count">{entries.length}</span>
+        <div className="sim-col-header-top">
+          <span className="sim-col-name">{SLOT_LABELS[slotKey]}</span>
+          <span className="sim-col-count">{entries.length}</span>
+        </div>
+        <p className="sim-col-desc">{SLOT_DESCRIPTIONS[slotKey]}</p>
       </div>
 
       {entries.length === 0 ? (
-        <div className="sim-col-empty">no files in this scope</div>
+        <div className="sim-col-empty">none for this folder</div>
       ) : (
         entries.map((entry) => {
           const ncEntry = nonCanonMap.get(entry.file.path);
@@ -710,7 +727,7 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
 
       {isAgentsMd && (
         <div className="sim-card-agents-note">
-          Not auto-loaded — needs <code>@AGENTS.md</code> in CLAUDE.md
+          Claude Code reads CLAUDE.md, not AGENTS.md. To use this file, add <code>@AGENTS.md</code> inside your CLAUDE.md.
         </div>
       )}
     </div>
@@ -811,6 +828,7 @@ interface AllCwdsTableProps {
   allCwdSim: Map<string, SimulatorResponse>;
   allCwdNonCanon: Map<string, NonCanonicalEntry[]>;
   loading: boolean;
+  home: string;
   onCellClick: (cwd: string) => void;
 }
 
@@ -819,19 +837,20 @@ function AllCwdsTable({
   allCwdSim,
   allCwdNonCanon,
   loading,
+  home,
   onCellClick,
 }: AllCwdsTableProps) {
   const dataReady = !loading && allCwdSim.size > 0;
 
   return (
     <div className="sim-allcwds-wrap">
-      {loading && <div className="sim-allcwds-loading-banner">Loading…</div>}
+      {loading && <div className="sim-allcwds-loading-banner">Loading all folders…</div>}
       <table className="sim-allcwds-table">
         <thead>
           <tr>
-            <th className="sim-allcwds-cwd-col">Working directory</th>
+            <th className="sim-allcwds-cwd-col">Folder</th>
             {SLOT_ORDER.map((slot) => (
-              <th key={slot} className="sim-allcwds-slot-col">{SLOT_LABELS[slot]}</th>
+              <th key={slot} className="sim-allcwds-slot-col" title={SLOT_DESCRIPTIONS[slot]}>{SLOT_LABELS[slot]}</th>
             ))}
           </tr>
         </thead>
@@ -847,6 +866,7 @@ function AllCwdsTable({
                 sim={sim}
                 ncPaths={ncPaths}
                 placeholder={!dataReady}
+                home={home}
                 onCellClick={onCellClick}
               />
             );
@@ -864,10 +884,11 @@ interface AllCwdsRowProps {
   sim: SimulatorResponse | undefined;
   ncPaths: Set<string>;
   placeholder: boolean;
+  home: string;
   onCellClick: (cwd: string) => void;
 }
 
-function AllCwdsRow({ entry, sim, ncPaths, placeholder, onCellClick }: AllCwdsRowProps) {
+function AllCwdsRow({ entry, sim, ncPaths, placeholder, home, onCellClick }: AllCwdsRowProps) {
   const slotCounts: Record<SlotKey, number> = {
     managed: 0, user: 0, ancestor: 0, project: 0, automemory: 0, ondemand: 0,
   };
@@ -878,9 +899,9 @@ function AllCwdsRow({ entry, sim, ncPaths, placeholder, onCellClick }: AllCwdsRo
   if (sim) {
     for (const step of sim.steps) {
       if (!step.file_path) continue;
-      const slot = simPathToSlot(step.file_path, entry.path);
+      const slot = simPathToSlot(step.file_path, entry.path, home);
       slotCounts[slot]++;
-      if (ncPaths.has(resolveAbsolute(step.file_path))) {
+      if (ncPaths.has(resolveAbsolute(step.file_path, home))) {
         slotNc[slot]++;
       }
     }
@@ -918,11 +939,10 @@ function AllCwdsRow({ entry, sim, ncPaths, placeholder, onCellClick }: AllCwdsRo
   );
 }
 
-function simPathToSlot(filePath: string, cwd: string): SlotKey {
-  const home = "/home/voxdecaelo";
+function simPathToSlot(filePath: string, cwd: string, home: string): SlotKey {
   const dotClaude = home + "/.claude";
   let p = filePath;
-  if (p.startsWith("~/")) p = home + "/" + p.slice(2);
+  if (p.startsWith("~/")) p = home + p.slice(1);
   if (p === dotClaude + "/CLAUDE.md" || p.startsWith(dotClaude + "/rules/")) return "user";
   if (p.startsWith(dotClaude + "/projects/") && p.includes("/memory/")) return "automemory";
   if (cwd) {
@@ -936,9 +956,8 @@ function simPathToSlot(filePath: string, cwd: string): SlotKey {
   return "ondemand";
 }
 
-function resolveAbsolute(p: string): string {
-  const home = "/home/voxdecaelo";
-  if (p.startsWith("~/")) return home + "/" + p.slice(2);
+function resolveAbsolute(p: string, home: string): string {
+  if (p.startsWith("~/")) return home + p.slice(1);
   return p;
 }
 

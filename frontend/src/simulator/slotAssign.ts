@@ -41,6 +41,16 @@ export const SLOT_LABELS: Record<SlotKey, string> = {
   ondemand: "On-demand",
 };
 
+// Short descriptions shown under each slot header — written for beginners.
+export const SLOT_DESCRIPTIONS: Record<SlotKey, string> = {
+  managed: "Organisation-wide rules set by IT/DevOps. Cannot be overridden.",
+  user:    "Your personal rules that apply to every project on this machine.",
+  ancestor: "CLAUDE.md and CLAUDE.local.md files found in parent folders, loaded top-down.",
+  project:  "Rules checked into the current project and shared with your team.",
+  automemory: "Notes Claude writes itself based on your corrections (per folder, first 200 lines).",
+  ondemand:   "Files Claude can read when it opens matching files — not loaded at the start of every session.",
+};
+
 // OS-managed policy paths. Compare against path strings only — no platform
 // detection. Linux / macOS / Windows covered.
 const MANAGED_PATHS = new Set([
@@ -57,20 +67,35 @@ export interface SlottedFile {
 
 export type SlotMap = Record<SlotKey, SlottedFile[]>;
 
-function homePath(): string {
-  // Collapse the real home prefix. The display field uses `~` already, but
-  // we need to expand it back for raw path comparisons. Use a fixed prefix
-  // that matches the deployment; the path field on FileEntry is always absolute.
-  return "/home/voxdecaelo";
+// Derive the home directory from the files array by finding any file whose
+// display starts with "~/" and extracting the real prefix from its path.
+// Falls back to "/home" if no such file is found (graceful degrade only —
+// in practice the user-global CLAUDE.md is always present).
+function deriveHome(files: FileEntry[]): string {
+  for (const f of files) {
+    if (f.display.startsWith("~/") && f.path.length > 2) {
+      // path = "/home/alice/.claude/CLAUDE.md", display = "~/.claude/CLAUDE.md"
+      // home = path.slice(0, path.length - display.length + 1)
+      const suffix = f.display.slice(1); // "/.claude/CLAUDE.md"
+      if (f.path.endsWith(suffix)) {
+        return f.path.slice(0, f.path.length - suffix.length);
+      }
+    }
+  }
+  // Fallback: scan for any file under a plausible home dir pattern.
+  for (const f of files) {
+    const m = /^(\/home\/[^/]+)\/.+/.exec(f.path);
+    if (m) return m[1];
+  }
+  return "/home";
 }
 
-function assignSlot(file: FileEntry, cwd: string | null): SlotKey {
+function assignSlot(file: FileEntry, cwd: string | null, home: string): SlotKey {
   const p = file.path;
 
   // 1. Managed
   if (MANAGED_PATHS.has(p)) return "managed";
 
-  const home = homePath();
   const dotClaude = home + "/.claude";
 
   // 2. User-global
@@ -127,6 +152,8 @@ export function buildSlotMap(
   edges: Edge[],
   cwd: string | null,
 ): SlotMap {
+  const home = deriveHome(allFiles);
+
   // Index files by id for fast lookup.
   const fileById = new Map<string, FileEntry>();
   for (const f of allFiles) {
@@ -169,7 +196,7 @@ export function buildSlotMap(
     const file = fileById.get(id);
     if (!file) continue;
     const step = stepByFileId.get(id);
-    const slot = assignSlot(file, cwd);
+    const slot = assignSlot(file, cwd, home);
     result[slot].push({ file, step, slot });
     if (slot !== "ondemand") assignedInNamedSlot.add(id);
   }

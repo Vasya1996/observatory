@@ -173,8 +173,9 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
                 aria-selected={simulatorMode === "per-cwd"}
                 className={`subtab${simulatorMode === "per-cwd" ? " on" : ""}`}
                 onClick={() => setSimulatorMode("per-cwd")}
+                title="Show which files Claude loads for the selected folder"
               >
-                <span className="num">02a</span>Per-cwd
+                <span className="num">02a</span>This folder
               </button>
               <button
                 type="button"
@@ -182,8 +183,9 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
                 aria-selected={simulatorMode === "all-cwds"}
                 className={`subtab${simulatorMode === "all-cwds" ? " on" : ""}`}
                 onClick={() => setSimulatorMode("all-cwds")}
+                title="See a summary across all discovered folders at once"
               >
-                <span className="num">02b</span>All-cwds
+                <span className="num">02b</span>All folders
               </button>
             </span>
           )}

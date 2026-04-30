@@ -4,10 +4,12 @@ export function EditorView() {
       <div className="placeholder">
         <h1>Editor <em>—</em> 03</h1>
         <p className="lede">
-          Read-only inspection of every CLAUDE.md, rule and memory file — with
-          frontmatter validation and autoload notes. Writes land in phase&nbsp;2.
+          Open a file from the Map or Simulator to view and edit it here.
         </p>
-        <p className="stub-note">step 5 of build sequence · backend /api/file is ready</p>
+        <p className="stub-note">
+          Double-click any node in Map (01a / 01b) or any card in Simulator (02a)
+          to open the editor panel on the left side of the screen.
+        </p>
       </div>
     </div>
   );
