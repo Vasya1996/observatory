@@ -149,7 +149,7 @@ export function ExtensionsView() {
         });
       }
     },
-    [requestWrite, pushToast, load],
+    [requestWrite, pushToast, load, SETTINGS_PATH],
   );
 
   const onPluginToggle = useCallback(
@@ -192,7 +192,7 @@ export function ExtensionsView() {
         });
       }
     },
-    [requestWrite, pushToast, load],
+    [requestWrite, pushToast, load, SETTINGS_PATH],
   );
 
   const onMcpToggle = useCallback(
@@ -235,7 +235,7 @@ export function ExtensionsView() {
         });
       }
     },
-    [requestWrite, pushToast, load],
+    [requestWrite, pushToast, load, MCP_PATH],
   );
 
   // --- render -------------------------------------------------------------
@@ -273,7 +273,7 @@ export function ExtensionsView() {
     return () => {
       cancelled = true;
     };
-  }, [data]);
+  }, [data, MCP_PATH]);
 
   const allMcp = useMemo(() => {
     const merged = [...mcp.map((s) => ({ ...s, _enabled: true }))];
