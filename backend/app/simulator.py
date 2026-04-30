@@ -27,6 +27,7 @@ from typing import Optional
 import pathspec
 
 from . import config
+from .canonical import classify_step
 from .models import Edge, FileEntry, SimulatorResponse, SimulatorStats, TimelineStep
 
 # Tokens-per-line placeholder. Real Claude Code tokens-per-line is ~10-15
@@ -104,6 +105,9 @@ def simulate(
 
     def _push(file: FileEntry, status: str, matched_on: str | None, reason: str | None):
         nonlocal conditional_count
+        _slot, is_canonical, _canonical_path, _nc_reason = classify_step(
+            file.path, matched_on, status, cwd
+        )
         steps.append(
             TimelineStep(
                 idx=len(steps),
@@ -112,6 +116,7 @@ def simulate(
                 status=status,  # type: ignore[arg-type]
                 matched_on=matched_on,
                 reason=reason,
+                is_canonical=is_canonical,
             )
         )
         if status == "loaded":

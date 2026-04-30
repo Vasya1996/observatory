@@ -102,6 +102,10 @@ class TimelineStep(BaseModel):
     status: TimelineStatus
     matched_on: Optional[str] = None
     reason: Optional[str] = None
+    # Phase 3 enrichment: True when the file lives at its canonical slot path.
+    # Yellow border in SimulatorView when False. Non-breaking — old clients
+    # that don't know this field ignore it.
+    is_canonical: bool = True
 
 
 class SimulatorStats(BaseModel):
@@ -192,6 +196,10 @@ class PreviewResponse(BaseModel):
 
 class WriteRequest(BaseModel):
     confirm_token: str
+    # Optional: when this write is part of a migration batch, the caller
+    # passes the migration_id so the handler can track which snapshots belong
+    # to this batch for best-effort rollback on later failures.
+    migration_id: Optional[str] = None
 
 
 class WriteResponse(BaseModel):
@@ -235,3 +243,84 @@ class PathProposal(BaseModel):
 
 class PathProposalsResponse(BaseModel):
     proposals: list[PathProposal]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Tier 1 verification primitives
+# ---------------------------------------------------------------------------
+
+
+class SimDiffResult(BaseModel):
+    """Per-cwd result of comparing two simulator snapshots."""
+    added: list[str] = Field(default_factory=list)        # paths new in after
+    removed: list[str] = Field(default_factory=list)      # paths gone in after
+    hash_changed: list[str] = Field(default_factory=list) # same path, different hash
+    unchanged_count: int = 0
+
+
+class ImportRef(BaseModel):
+    """A single @-import reference found in a source file."""
+    file_path: str
+    line_number: int
+    raw_line: str
+
+
+class NonCanonicalEntry(BaseModel):
+    """A file loaded by the simulator that doesn't live at its canonical slot path."""
+    file_path: str
+    slot: str   # e.g. "user-global", "ancestor-walk", "project", "on-demand"
+    canonical_path: str    # what the canonical path for that slot would be
+    reason: Literal[
+        "loaded_via_at_import",
+        "outside_canonical_dir",
+        "wrong_filename_at_canonical_path",
+    ]
+    importer_path: Optional[str] = None  # set when reason == loaded_via_at_import
+    importer_line: Optional[int] = None
+
+
+class NonCanonicalResponse(BaseModel):
+    non_canonical: list[NonCanonicalEntry]
+
+
+class MergePlan(BaseModel):
+    """Result of plan_merge() — a planned content merge into a target file."""
+    merged_body: str
+    heading_collisions: list[str] = Field(default_factory=list)
+    unified_diff: str
+
+
+class MigrateFilePlan(BaseModel):
+    path: str
+    action: Literal["create", "modify", "delete"]
+    new_content: Optional[str] = None
+    # unified diff of this single file; empty for pure deletions
+    diff: str = ""
+
+
+class MigratePreviewRequest(BaseModel):
+    source_path: str
+    mode: Literal["rule", "merge"]
+    # For rule mode: directory to create the new rule in (default ~/.claude/rules/)
+    target_dir_or_file: Optional[str] = None
+    # Filename for the new rule file (rule mode only)
+    new_filename: Optional[str] = None
+    delete_original: bool = False
+
+
+class MigratePreviewResponse(BaseModel):
+    tokens: list[str]          # one confirm_token per affected file (same shape as /api/preview)
+    migration_id: str          # batch id used for rollback tracking
+    plan: "MigratePlan"
+
+
+class MigratePlan(BaseModel):
+    files_changed: list[MigrateFilePlan]
+    sim_diff: Optional[SimDiffResult] = None
+    content_identity: Literal["exact", "substring", "fail"]
+    orphan_importers: list[ImportRef] = Field(default_factory=list)
+    heading_collisions: list[str] = Field(default_factory=list)
+
+
+# Needed for forward-reference resolution.
+MigratePreviewResponse.model_rebuild()

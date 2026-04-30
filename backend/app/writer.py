@@ -27,6 +27,12 @@ from . import config
 SNAPSHOTS_ROOT = config.HOME / ".claude" / ".observatory" / "snapshots"
 MAX_SNAPSHOTS_PER_TARGET = 10
 
+# In-memory tracking of snapshots taken during a migration batch.
+# {migration_id: [(target_path_str, snapshot_id), ...]}
+# Written by take_snapshot() when called with a migration_id.
+# Cleared on batch completion or failure by the /api/write handler.
+MIGRATION_SNAPSHOTS: dict[str, list[tuple[str, str]]] = {}
+
 
 def _target_dir(target_path: Path) -> Path:
     """Snapshot directory for a target path, keyed by sha1 of its absolute form."""
@@ -40,7 +46,10 @@ def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
-def take_snapshot(target_path: Path) -> str:
+def take_snapshot(
+    target_path: Path,
+    migration_id: str | None = None,
+) -> str:
     """Copy current file content to ``<snapshots_root>/<sha1>/<timestamp>.snap``.
 
     For "creation" calls where the target does not yet exist on disk, an empty
@@ -50,6 +59,10 @@ def take_snapshot(target_path: Path) -> str:
     Retention: prunes to the last ``MAX_SNAPSHOTS_PER_TARGET`` snapshots per target.
     Raises OSError if the snapshot dir cannot be created or the copy fails —
     the caller MUST abort the write in that case.
+
+    When migration_id is provided, records the (target_path, snapshot_id) pair
+    under MIGRATION_SNAPSHOTS[migration_id] so the /api/write handler can
+    restore already-written files on a later failure in the batch.
     """
     snap_dir = _target_dir(target_path)
     snap_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +73,49 @@ def take_snapshot(target_path: Path) -> str:
     else:
         snap_path.write_bytes(b"")
     _prune_snapshots(snap_dir)
+    if migration_id is not None:
+        MIGRATION_SNAPSHOTS.setdefault(migration_id, []).append(
+            (str(target_path), timestamp)
+        )
     return timestamp
+
+
+def restore_snapshot(target_path: Path, snapshot_id: str) -> None:
+    """Restore a file from a previously taken snapshot.
+
+    Used by the /api/write handler for migration batch rollback on failure.
+    Raises OSError / FileNotFoundError if the snapshot doesn't exist.
+    """
+    snap_dir = _target_dir(target_path)
+    snap_path = snap_dir / f"{snapshot_id}.snap"
+    if not snap_path.is_file():
+        raise FileNotFoundError(f"snapshot not found: {snap_path}")
+    if snap_path.stat().st_size == 0:
+        # Empty snapshot = file didn't exist before; delete the target.
+        try:
+            target_path.unlink()
+        except FileNotFoundError:
+            pass
+    else:
+        atomic_write(target_path, snap_path.read_text(encoding="utf-8", errors="replace"))
+
+
+def rollback_migration(migration_id: str) -> list[str]:
+    """Best-effort rollback of all writes taken during a migration batch.
+
+    Iterates MIGRATION_SNAPSHOTS[migration_id] in reverse order (last write
+    first) and restores each file from its snapshot. Returns list of paths that
+    failed to restore so the caller can surface them in the error response.
+    Clears the migration entry on completion.
+    """
+    entries = MIGRATION_SNAPSHOTS.pop(migration_id, [])
+    failed: list[str] = []
+    for path_str, snap_id in reversed(entries):
+        try:
+            restore_snapshot(Path(path_str), snap_id)
+        except Exception:
+            failed.append(path_str)
+    return failed
 
 
 def _prune_snapshots(snap_dir: Path) -> None:

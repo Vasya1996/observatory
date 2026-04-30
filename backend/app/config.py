@@ -6,6 +6,8 @@ target is opportunistic — absent files are silently skipped) and strict about
 """
 from __future__ import annotations
 
+import os
+import platform
 from pathlib import Path
 
 HOME = Path.home()
@@ -46,6 +48,26 @@ FRONTEND_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
 ]
+
+
+def os_managed_claude_md_path() -> Path:
+    """Return the OS-level managed CLAUDE.md path for the current platform.
+
+    This is the "Managed" slot (slot 1 in the 5-slot Simulator ribbon) —
+    org-level instructions that cannot be excluded by user-level settings.
+
+    Linux/WSL: /etc/claude-code/CLAUDE.md
+    macOS:     /Library/Application Support/ClaudeCode/CLAUDE.md
+    Windows:   C:\\Program Files\\ClaudeCode\\CLAUDE.md
+    """
+    system = platform.system()
+    if system == "Darwin":
+        return Path("/Library/Application Support/ClaudeCode/CLAUDE.md")
+    if system == "Windows":
+        return Path(r"C:\Program Files\ClaudeCode\CLAUDE.md")
+    # Linux — check for WSL (WSL_DISTRO_NAME is set in WSL environments).
+    # Both native Linux and WSL use the same path.
+    return Path("/etc/claude-code/CLAUDE.md")
 
 
 def collapse_home(path: Path | str) -> str:
