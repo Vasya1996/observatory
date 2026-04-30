@@ -16,6 +16,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import canonical, config, paths_proposals, scanner, tier2, writer
 from .markdown_merge import plan_merge
 from .models import (
+    AutoloadMechanism,
     AutoloadTogglePreviewResponse,
     AutoloadToggleRequest,
     CommittedFile,
@@ -1387,7 +1388,7 @@ _DISABLED_SENTINEL = ".DISABLED"
 _DISABLED_COMMENT_PREFIX = "# [disabled by Observatory] "
 
 
-def _autoload_toggle_rule(current: str, enabled: bool) -> tuple[str, str]:
+def _autoload_toggle_rule(current: str, enabled: bool) -> tuple[str, AutoloadMechanism]:
     """Compute new content for a rule file toggle and the mechanism used.
 
     Returns (new_content, mechanism).
@@ -1418,7 +1419,7 @@ def _autoload_toggle_rule(current: str, enabled: bool) -> tuple[str, str]:
 
 def _autoload_toggle_skill(
     current_settings: str, enabled: bool, skill_literal: str
-) -> tuple[str, str]:
+) -> tuple[str, AutoloadMechanism]:
     """Patch settings.json permissions.deny for a skill toggle.
 
     Returns (new_settings_content, mechanism).
@@ -1447,7 +1448,7 @@ def _autoload_toggle_skill(
 
 def _autoload_toggle_knowledge_memory_index(
     memory_index_path: Path, target_path: Path, enabled: bool
-) -> tuple[str | None, str]:
+) -> tuple[str | None, AutoloadMechanism]:
     """Comment or uncomment the line in MEMORY.md that references target_path.
 
     Returns (new_content_or_None_if_no_change, mechanism). None means no
@@ -1516,7 +1517,7 @@ def _find_at_import_parent(
 
 def _autoload_toggle_knowledge_import(
     current_parent: str, line_number: int, raw_line: str, enabled: bool
-) -> tuple[str, str]:
+) -> tuple[str, AutoloadMechanism]:
     """Comment or uncomment the @-import line in the parent CLAUDE.md.
 
     Returns (new_parent_content, mechanism).
