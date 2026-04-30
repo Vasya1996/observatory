@@ -29,6 +29,7 @@ from .models import (
     DeleteUndoResponse,
     ExtensionsResponse,
     FileReadResponse,
+    GlobChange,
     ImportRef,
     IndexResponse,
     McpCard,
@@ -182,6 +183,68 @@ def _rewrite_paths_globs(source_body: str, new_globs: list[str] | None) -> str:
         # All keys removed; strip frontmatter block entirely.
         return body.lstrip("\n")
     return _emit_frontmatter(fm, body)
+
+
+def _compute_glob_changes_for_move(
+    source: Path,
+    dest: Path,
+    source_body: str,
+) -> list[GlobChange]:
+    """Compute GlobChange entries for a rule file being moved from source to dest.
+
+    When the rule has paths: frontmatter, each glob that references the
+    source file's parent directory (or a project under it) needs to be
+    rewritten to reference the destination directory.  Uses paths_proposals
+    logic for the segment-matching heuristic.
+
+    Returns an empty list if the rule has no paths: frontmatter or if no
+    globs need to change.
+    """
+    fm, _ = _split_frontmatter(source_body)
+    raw_globs = fm.get("paths") or []
+    if isinstance(raw_globs, str):
+        raw_globs = [raw_globs]
+    if not raw_globs:
+        return []
+
+    changes: list[GlobChange] = []
+    dest_dir = dest.parent
+    src_dir = source.parent
+
+    for glob in raw_globs:
+        glob = str(glob)
+        # Use paths_proposals' prefix extractor to find the literal dir component.
+        prefix_dir = paths_proposals._literal_prefix_dir(glob)
+        if prefix_dir is None:
+            continue
+        # If the glob's literal prefix is under or equal to src_dir, rewrite it
+        # to point at dest_dir (or the equivalent in the new project).
+        try:
+            rel = prefix_dir.relative_to(src_dir)
+            new_prefix = dest_dir / rel
+        except ValueError:
+            # Glob doesn't reference the source dir — check if src_dir name
+            # appears as a segment (same heuristic as paths_proposals).
+            seg = paths_proposals._glob_first_segment(glob)
+            if seg and seg == src_dir.name:
+                new_glob = paths_proposals._propose_replacement(glob, dest_dir)
+                if new_glob != glob:
+                    changes.append(GlobChange(
+                        original_glob=glob,
+                        proposed_glob=new_glob,
+                        reason=f"project root changed: {config.collapse_home(src_dir)} → {config.collapse_home(dest_dir)}",
+                    ))
+            continue
+
+        new_glob = paths_proposals._propose_replacement(glob, new_prefix)
+        if new_glob != glob:
+            changes.append(GlobChange(
+                original_glob=glob,
+                proposed_glob=new_glob,
+                reason=f"project root changed: {config.collapse_home(src_dir)} → {config.collapse_home(dest_dir)}",
+            ))
+
+    return changes
 
 
 def _cache(req: Request) -> IndexCache:
@@ -345,26 +408,14 @@ def post_preview(req: Request, body: PreviewRequest) -> PreviewResponse:
     Phase 2 invariant: every write must be preceded by a preview. The token
     is bound to the new content + base hash so a hash mismatch on the actual
     write rejects with 409.
+
+    No pre-emptive 403 for OS-managed or plugin-cache files (locked rule update).
+    The user may edit ANY file through Observatory with a confirmation modal.
+    If the OS rejects the write (EACCES on /etc/), the write endpoint returns
+    a plain-language error after the attempt.
     """
     _purge_expired_pending()
     target = Path(body.path).expanduser().resolve()
-
-    # Item 17: refuse to edit the managed-policy CLAUDE.md without elevated
-    # privileges. The managed path is OS-specific (see config.py); it's
-    # typically owned by root/admin and requires sudo to modify.
-    managed_path = config.os_managed_claude_md_path()
-    try:
-        if target == managed_path.resolve():
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "Managed-policy CLAUDE.md cannot be edited through Observatory. "
-                    "It requires elevated privileges (sudo). "
-                    f"Path: {managed_path}"
-                ),
-            )
-    except OSError:
-        pass
 
     files, _, _ = _cache(req).snapshot()
     in_scope = {Path(f.path): f for f in files}
@@ -372,14 +423,6 @@ def post_preview(req: Request, body: PreviewRequest) -> PreviewResponse:
     is_creation = not target.is_file()
 
     if is_creation:
-        if not _is_under_allowed_creation_zone(target):
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "creation only allowed under ~/.claude/rules/, "
-                    "~/.claude/knowledge/, or <cwd>/.claude/rules/"
-                ),
-            )
         current = ""
         base_hash = writer.compute_content_hash("")
     else:
@@ -388,11 +431,6 @@ def post_preview(req: Request, body: PreviewRequest) -> PreviewResponse:
             raise HTTPException(
                 status_code=400,
                 detail=f"path not in scanned set: {body.path}",
-            )
-        if not entry.writable:
-            raise HTTPException(
-                status_code=403,
-                detail=f"file kind '{entry.kind}' is not writable",
             )
         try:
             current = target.read_text(encoding="utf-8")
@@ -625,11 +663,14 @@ def post_migrate_preview(
     """
     _purge_expired_pending()
     cache = _cache(req)
-    _, _, _ = cache.snapshot()
+    files_snap, _, _ = cache.snapshot()
 
     source = Path(body.source_path).expanduser().resolve()
     if not source.is_file():
         raise HTTPException(status_code=400, detail=f"source not found: {body.source_path}")
+
+    by_path_snap: dict[str, "FileEntry"] = {f.path: f for f in files_snap}
+    source_entry = by_path_snap.get(str(source))
 
     try:
         source_body = source.read_text(encoding="utf-8", errors="replace")
@@ -650,6 +691,20 @@ def post_migrate_preview(
             target_dir = config.CLAUDE_DIR / "rules"
         filename = body.new_filename or source.name
         target_file = target_dir / filename
+
+        # CLAUDE.md collision: block if target dir already has a CLAUDE.md and
+        # we're not just moving the same file in-place.
+        if filename == "CLAUDE.md" and target_file.is_file() and target_file != source:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "detail": (
+                        "Целевая папка уже содержит CLAUDE.md. "
+                        "Выберите другую папку или сначала объедините содержимое вручную."
+                    ),
+                    "existing_path": str(target_file),
+                },
+            )
 
         diff = "".join(
             difflib.unified_diff(
@@ -821,6 +876,51 @@ def post_migrate_preview(
         else:
             content_identity = "fail"
 
+    # -------------------------------------------------------------------------
+    # MEMORY.md auto-update: when a knowledge file is moved out of its original
+    # directory, update the MEMORY.md line that points to it with the new path.
+    # Applies to rule mode (file moves to a new dir) and move-to-project mode.
+    # add-paths / remove-paths / merge leave the file in place — no path change.
+    # -------------------------------------------------------------------------
+    _knowledge_dir = config.CLAUDE_DIR / "knowledge"
+    _memory_index_path = _knowledge_dir / "MEMORY.md"
+    if (
+        body.mode in ("rule", "move-to-project")
+        and _is_under_knowledge_dir(source, _knowledge_dir)
+        and _memory_index_path.is_file()
+    ):
+        # Find the destination path from the create plan entry.
+        _dest_file: Optional[Path] = None
+        for _fc in files_changed:
+            if _fc.action == "create":
+                _dest_file = Path(_fc.path)
+                break
+        if _dest_file is not None and _dest_file != source:
+            try:
+                _mem_body = _memory_index_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                _mem_body = None
+            if _mem_body is not None:
+                _new_mem_body = _rewrite_memory_index_path(
+                    _mem_body, source, _dest_file
+                )
+                if _new_mem_body != _mem_body:
+                    _mem_diff = "".join(
+                        difflib.unified_diff(
+                            _mem_body.splitlines(keepends=True),
+                            _new_mem_body.splitlines(keepends=True),
+                            fromfile=f"a/{config.collapse_home(_memory_index_path)}",
+                            tofile=f"b/{config.collapse_home(_memory_index_path)}",
+                            n=3,
+                        )
+                    )
+                    files_changed.append(MigrateFilePlan(
+                        path=str(_memory_index_path),
+                        action="modify",
+                        new_content=_new_mem_body,
+                        diff=_mem_diff,
+                    ))
+
     # Find @-import line in any importer and plan its removal.
     # Skipped for add-paths / remove-paths (no move — the file stays in place)
     # and for move-to-project (importer rewrite already baked into files_changed).
@@ -946,6 +1046,21 @@ def post_migrate_preview(
         tokens.append(token)
     MIGRATION_TOKENS[migration_id] = tokens
 
+    # -------------------------------------------------------------------------
+    # Glob auto-rewrite side-effect: when a paths:-scoped rule moves between
+    # projects, compute what the paths: globs would need to become in the
+    # new location.  Informational — included in the diff modal description.
+    # The user must manually apply proposed glob rewrites if they want them;
+    # or they can use add-paths / remove-paths wizard modes afterwards.
+    # -------------------------------------------------------------------------
+    glob_changes: list[GlobChange] = []
+    if body.mode in ("rule", "move-to-project") and source_entry and source_entry.kind == "rule":
+        dest_create = next((fc for fc in files_changed if fc.action == "create"), None)
+        if dest_create is not None:
+            glob_changes = _compute_glob_changes_for_move(
+                source, Path(dest_create.path), source_body
+            )
+
     return MigratePreviewResponse(
         tokens=tokens,
         migration_id=migration_id,
@@ -955,6 +1070,7 @@ def post_migrate_preview(
             content_identity=content_identity,  # type: ignore[arg-type]
             orphan_importers=orphan_importers,
             heading_collisions=heading_collisions,
+            glob_changes=glob_changes,
         ),
     )
 
@@ -1039,19 +1155,6 @@ def post_delete(req: Request, body: DeletePreviewRequest) -> DeletePreviewRespon
     entry = in_scope.get(target)
     if entry is None:
         raise HTTPException(status_code=400, detail=f"path not in scanned set: {body.path}")
-    if not entry.writable:
-        raise HTTPException(
-            status_code=403,
-            detail=f"file kind '{entry.kind}' is not writable",
-        )
-    if not _is_under_writable_creation_zone(target):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "delete only allowed under ~/.claude/rules/, "
-                "~/.claude/knowledge/, or <cwd>/.claude/rules/"
-            ),
-        )
 
     try:
         snapshot_id = writer.take_snapshot(target)
@@ -1143,16 +1246,6 @@ def post_restore_from_snapshot(
     403 when the target path is not writable per the WRITABLE_KINDS whitelist.
     """
     target = Path(body.path).expanduser().resolve()
-
-    # Permission check: only writable kinds can be restored through Observatory.
-    files, _, _ = _cache(req).snapshot()
-    in_scope = {Path(f.path): f for f in files}
-    entry = in_scope.get(target)
-    if entry is not None and not entry.writable:
-        raise HTTPException(
-            status_code=403,
-            detail=f"File kind '{entry.kind}' cannot be modified through Observatory.",
-        )
 
     # Validate snapshot exists: <snapshots_root>/<sha1-of-path>/<snapshot_id>.snap
     snap_dir = writer._target_dir(target)
