@@ -50,6 +50,18 @@ FRONTEND_ORIGINS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Tier 2 deep-verify availability flag.
+# Flip TIER2_AVAILABLE to True when --init-only empirical probe is confirmed
+# working on this Claude version (see Phase 3 plan section 5 open questions).
+# ---------------------------------------------------------------------------
+TIER2_AVAILABLE: bool = False
+TIER2_REASON: str = (
+    "Deep verification requires --init-only flag, "
+    "not present in this Claude version"
+)
+
+
 def os_managed_claude_md_path() -> Path:
     """Return the OS-level managed CLAUDE.md path for the current platform.
 

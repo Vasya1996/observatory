@@ -307,12 +307,16 @@ class MigrateFilePlan(BaseModel):
 
 class MigratePreviewRequest(BaseModel):
     source_path: str
-    mode: Literal["rule", "merge"]
+    mode: Literal["rule", "merge", "add-paths", "remove-paths", "move-to-project"]
     # For rule mode: directory to create the new rule in (default ~/.claude/rules/)
     target_dir_or_file: Optional[str] = None
     # Filename for the new rule file (rule mode only)
     new_filename: Optional[str] = None
     delete_original: bool = False
+    # add-paths mode: glob patterns to add to (or merge with) existing paths: field
+    paths_globs: Optional[list[str]] = None
+    # move-to-project mode: project cwd to move the rule into
+    target_cwd: Optional[str] = None
 
 
 class MigratePreviewResponse(BaseModel):

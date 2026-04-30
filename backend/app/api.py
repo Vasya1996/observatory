@@ -8,13 +8,11 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from . import canonical, config, paths_proposals, scanner, writer
-from .content_hash import body_contains, sha256_of_body
 from .markdown_merge import plan_merge
 from .models import (
     CwdEntry,
@@ -122,6 +120,63 @@ def _purge_expired_pending() -> None:
         PENDING_WRITES.pop(token, None)
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Frontmatter rewriting helpers (used by add-paths / remove-paths modes).
+# ---------------------------------------------------------------------------
+
+import re as _re
+import yaml as _yaml
+
+
+def _split_frontmatter(text: str) -> tuple[dict, str]:
+    """Split a file into (frontmatter_dict, body_text).
+
+    Body includes everything after the closing `---`. Returns ({}, text) when
+    there is no leading frontmatter block.
+    """
+    if not text.startswith("---"):
+        return {}, text
+    end = text.find("\n---", 3)
+    if end == -1:
+        return {}, text
+    fm_block = text[3:end].strip()
+    body = text[end + 4:]  # skip the trailing `---\n`
+    try:
+        fm = _yaml.safe_load(fm_block) or {}
+    except _yaml.YAMLError:
+        fm = {}
+    return fm, body
+
+
+def _emit_frontmatter(fm: dict, body: str) -> str:
+    """Reassemble frontmatter + body into a full file string.
+
+    Uses yaml.dump with default_flow_style=False and allow_unicode so the
+    output is readable. Keys are written in the order they appear in `fm`
+    (Python 3.7+ dict ordering). A trailing newline is added when body does
+    not start with one.
+    """
+    dumped = _yaml.dump(fm, default_flow_style=False, allow_unicode=True).rstrip()
+    return f"---\n{dumped}\n---{body}"
+
+
+def _rewrite_paths_globs(source_body: str, new_globs: list[str] | None) -> str:
+    """Return `source_body` with the `paths:` frontmatter key set to
+    `new_globs`. Passing None removes the key entirely.
+
+    Preserves all other frontmatter keys verbatim. Adds a frontmatter block
+    if the file has none.
+    """
+    fm, body = _split_frontmatter(source_body)
+    if new_globs is None:
+        fm.pop("paths", None)
+    else:
+        fm["paths"] = new_globs
+    if not fm:
+        # All keys removed; strip frontmatter block entirely.
+        return body.lstrip("\n")
+    return _emit_frontmatter(fm, body)
 
 
 def _cache(req: Request) -> IndexCache:
@@ -566,8 +621,6 @@ def post_migrate_preview(
         filename = body.new_filename or source.name
         target_file = target_dir / filename
 
-        # Compute diff for new rule file creation.
-        import difflib
         diff = "".join(
             difflib.unified_diff(
                 [],
@@ -584,6 +637,132 @@ def post_migrate_preview(
             diff=diff,
         ))
         content_identity: str = "exact"
+
+    elif body.mode == "add-paths":
+        if not body.paths_globs:
+            raise HTTPException(
+                status_code=422,
+                detail="On-demand drop requires path patterns — supply paths_globs",
+            )
+        fm, _ = _split_frontmatter(source_body)
+        existing = fm.get("paths") or []
+        if isinstance(existing, str):
+            existing = [existing]
+        merged_globs = list(dict.fromkeys(list(existing) + list(body.paths_globs)))
+        new_body = _rewrite_paths_globs(source_body, merged_globs)
+        diff = "".join(
+            difflib.unified_diff(
+                source_body.splitlines(keepends=True),
+                new_body.splitlines(keepends=True),
+                fromfile=f"a/{config.collapse_home(source)}",
+                tofile=f"b/{config.collapse_home(source)}",
+                n=3,
+            )
+        )
+        files_changed.append(MigrateFilePlan(
+            path=str(source),
+            action="modify",
+            new_content=new_body,
+            diff=diff,
+        ))
+        content_identity = "exact"  # body unchanged; only frontmatter mutated
+
+    elif body.mode == "remove-paths":
+        new_body = _rewrite_paths_globs(source_body, None)
+        diff = "".join(
+            difflib.unified_diff(
+                source_body.splitlines(keepends=True),
+                new_body.splitlines(keepends=True),
+                fromfile=f"a/{config.collapse_home(source)}",
+                tofile=f"b/{config.collapse_home(source)}",
+                n=3,
+            )
+        )
+        files_changed.append(MigrateFilePlan(
+            path=str(source),
+            action="modify",
+            new_content=new_body,
+            diff=diff,
+        ))
+        content_identity = "exact"  # body unchanged; only frontmatter mutated
+
+    elif body.mode == "move-to-project":
+        if not body.target_cwd:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Moving to a project requires a project folder — "
+                    "supply target_cwd"
+                ),
+            )
+        target_cwd = Path(body.target_cwd).expanduser().resolve()
+        if not target_cwd.is_dir():
+            raise HTTPException(
+                status_code=400,
+                detail=f"target_cwd is not a directory: {body.target_cwd}",
+            )
+        # Destination: <target_cwd>/.claude/rules/<source_filename>
+        dest_file = target_cwd / ".claude" / "rules" / source.name
+
+        # Plan 1: create rule at new project location.
+        diff_create = "".join(
+            difflib.unified_diff(
+                [],
+                source_body.splitlines(keepends=True),
+                fromfile="/dev/null",
+                tofile=f"b/{config.collapse_home(dest_file)}",
+                n=3,
+            )
+        )
+        files_changed.append(MigrateFilePlan(
+            path=str(dest_file),
+            action="create",
+            new_content=source_body,
+            diff=diff_create,
+        ))
+
+        # Plan 2: delete original.
+        files_changed.append(MigrateFilePlan(
+            path=str(source),
+            action="delete",
+            new_content="",
+            diff="",
+        ))
+
+        # Plan 3: update any @-import in ~/.claude/CLAUDE.md that references
+        # the old path, rewriting it to the new project-relative path.
+        user_claude_md = config.CLAUDE_DIR / "CLAUDE.md"
+        if user_claude_md.is_file():
+            try:
+                claude_body = user_claude_md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                claude_body = None
+            if claude_body is not None:
+                old_display = config.collapse_home(source)
+                new_display = config.collapse_home(dest_file)
+                new_claude_body = claude_body.replace(
+                    f"@{old_display}", f"@{new_display}"
+                ).replace(
+                    f"@{str(source)}", f"@{new_display}"
+                )
+                if new_claude_body != claude_body:
+                    imp_diff = "".join(
+                        difflib.unified_diff(
+                            claude_body.splitlines(keepends=True),
+                            new_claude_body.splitlines(keepends=True),
+                            fromfile=f"a/{config.collapse_home(user_claude_md)}",
+                            tofile=f"b/{config.collapse_home(user_claude_md)}",
+                            n=3,
+                        )
+                    )
+                    files_changed.append(MigrateFilePlan(
+                        path=str(user_claude_md),
+                        action="modify",
+                        new_content=new_claude_body,
+                        diff=imp_diff,
+                    ))
+
+        content_identity = "exact"
 
     else:  # merge
         if body.target_dir_or_file:
@@ -613,38 +792,39 @@ def post_migrate_preview(
             content_identity = "fail"
 
     # Find @-import line in any importer and plan its removal.
+    # Skipped for add-paths / remove-paths (no move — the file stays in place)
+    # and for move-to-project (importer rewrite already baked into files_changed).
     importers = find_importers(source, cache)
-    for imp in importers:
-        imp_path = Path(imp.file_path)
-        try:
-            imp_body = imp_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        imp_lines = imp_body.splitlines(keepends=True)
-        # Remove the specific import line.
-        new_lines = [
-            ln for i, ln in enumerate(imp_lines, start=1)
-            if i != imp.line_number
-        ]
-        new_imp_body = "".join(new_lines)
-        import difflib
-        imp_diff = "".join(
-            difflib.unified_diff(
-                imp_lines,
-                new_lines,
-                fromfile=f"a/{config.collapse_home(imp_path)}",
-                tofile=f"b/{config.collapse_home(imp_path)}",
-                n=3,
+    if body.mode not in ("add-paths", "remove-paths", "move-to-project"):
+        for imp in importers:
+            imp_path = Path(imp.file_path)
+            try:
+                imp_body = imp_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            imp_lines = imp_body.splitlines(keepends=True)
+            new_lines = [
+                ln for i, ln in enumerate(imp_lines, start=1)
+                if i != imp.line_number
+            ]
+            new_imp_body = "".join(new_lines)
+            imp_diff = "".join(
+                difflib.unified_diff(
+                    imp_lines,
+                    new_lines,
+                    fromfile=f"a/{config.collapse_home(imp_path)}",
+                    tofile=f"b/{config.collapse_home(imp_path)}",
+                    n=3,
+                )
             )
-        )
-        files_changed.append(MigrateFilePlan(
-            path=str(imp_path),
-            action="modify",
-            new_content=new_imp_body,
-            diff=imp_diff,
-        ))
+            files_changed.append(MigrateFilePlan(
+                path=str(imp_path),
+                action="modify",
+                new_content=new_imp_body,
+                diff=imp_diff,
+            ))
 
-    if body.delete_original:
+    if body.delete_original and body.mode not in ("add-paths", "remove-paths", "move-to-project"):
         files_changed.append(MigrateFilePlan(
             path=str(source),
             action="delete",
@@ -918,6 +1098,17 @@ def post_delete_undo(req: Request, body: DeleteUndoRequest) -> DeleteUndoRespons
         pass
 
     return DeleteUndoResponse(restored=True)
+
+
+@router.get("/tier2-status")
+def get_tier2_status() -> dict:
+    """Return whether Tier 2 deep verification is available on this system.
+
+    Frontend renders an informational banner from this when available=false.
+    Flip config.TIER2_AVAILABLE to True once the --init-only empirical probe
+    confirms InstructionsLoaded fires (Phase 3 plan section 5, open question 1).
+    """
+    return {"available": config.TIER2_AVAILABLE, "reason": config.TIER2_REASON}
 
 
 @router.get("/events")
