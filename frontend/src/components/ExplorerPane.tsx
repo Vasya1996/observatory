@@ -27,6 +27,7 @@
  */
 
 import {
+  type Ref,
   forwardRef,
   useCallback,
   useEffect,
@@ -191,7 +192,7 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   }
 
   return (
-    <aside className="explorer-pane" ref={ref as React.Ref<HTMLElement>}>
+    <aside className="explorer-pane" ref={ref as Ref<HTMLElement>}>
       <div className="explorer-pane-header">
         <h2 className="explorer-pane-title">
           File <em>explorer</em>
