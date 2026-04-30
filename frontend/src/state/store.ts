@@ -97,6 +97,9 @@ interface Store {
   showInternal: boolean;
   setShowInternal: (v: boolean) => void;
 
+  legendOpen: boolean;
+  setLegendOpen: (open: boolean) => void;
+
   hydrate: (s: UiState) => void;
 
   // --- Phase 2 write pipeline (NOT persisted to /api/state) ----------------
@@ -120,6 +123,7 @@ function snapshot(s: Store): UiState {
     editor_open: s.editorOpen,
     tree_expanded: [...s.treeExpanded],
     tree_width: s.explorerWidth,
+    legend_open: s.legendOpen,
   };
 }
 
@@ -216,6 +220,12 @@ export const useStore = create<Store>((set, get) => ({
     schedulePersist(get);
   },
 
+  legendOpen: false,
+  setLegendOpen: (open) => {
+    set({ legendOpen: open });
+    schedulePersist(get);
+  },
+
   hydrate: (s) => {
     const expanded = s.tree_expanded && s.tree_expanded.length > 0
       ? new Set<string>(s.tree_expanded)
@@ -234,6 +244,7 @@ export const useStore = create<Store>((set, get) => ({
       editorOpen: s.editor_open ?? false,
       treeExpanded: expanded,
       explorerWidth,
+      legendOpen: s.legend_open ?? false,
     });
   },
 

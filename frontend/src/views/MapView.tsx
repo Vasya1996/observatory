@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type cytoscape from "cytoscape";
-import { CwdSelector } from "../components/CwdSelector";
 import { ExplorerPane } from "../components/ExplorerPane";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { IconOverlay } from "../components/IconOverlay";
@@ -10,6 +9,7 @@ import { EdgeInfo } from "../components/EdgeInfo";
 import { EditorPanel } from "../components/EditorPanel";
 import { ContextMenu } from "../components/ContextMenu";
 import { MigrationVerifiedCard } from "../components/MigrationVerifiedCard";
+import { LegendOverlay } from "../components/LegendOverlay";
 import { ErrorBoundary, EditorBoundary } from "../components/ErrorBoundary";
 import type { ContextMenuTarget } from "../components/ContextMenu";
 import { fetchCwds, fetchNonCanonical, fetchSimulate, fetchTier2Status } from "../api/client";
@@ -302,6 +302,7 @@ export function MapView() {
           orphanConfigs={orphanConfigs}
           priorityMap={priorityMap}
           steps={simulateSteps}
+          statusMap={statusMap}
           onRowHover={handleRowHover}
           onRowContextMenu={handleExplorerContextMenu}
           refetching={simulateRefetching}
@@ -359,6 +360,11 @@ export function MapView() {
         {/* Migration-verified card — shown after a successful file move. */}
         <MigrationVerifiedCard key={migrationCardKey} activeCwd={lastCwd} />
 
+        {/* Map legend — top-right corner, collapsible (locked rule #60). */}
+        <ErrorBoundary label="Legend">
+          <LegendOverlay />
+        </ErrorBoundary>
+
         {/* EditorPanel slides in from the left edge of the canvas area. */}
         <EditorBoundary>
           <EditorPanel files={visibleFiles} />
@@ -374,7 +380,6 @@ export function MapView() {
           />
           <IconOverlay cy={cy} />
           <PinOverlay cy={cy} />
-          <CwdSelector />
           <EdgeInfo edge={hoveredEdge} files={visibleFiles} />
         </ErrorBoundary>
       </div>

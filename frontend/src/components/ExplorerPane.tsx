@@ -36,7 +36,7 @@ import { useStore } from "../state/store";
 import { useWritePipeline } from "../hooks/useWritePipeline";
 import { postAutoloadTogglePreview } from "../api/client";
 import { ICON_PATH_BY_KIND } from "./nodeIcons";
-import type { FileEntry, OrphanConfigEntry, TimelineStep } from "../types";
+import type { FileEntry, LoadStatus, OrphanConfigEntry, TimelineStep } from "../types";
 import {
   buildExplorerTree,
   ancestorIds,
@@ -48,6 +48,7 @@ import {
 } from "./explorerTree";
 import { NormalizeWizardModal, type NormalizeMode } from "./NormalizeWizardModal";
 import { CrossCwdPanel } from "./CrossCwdPanel";
+import { CwdSelector } from "./CwdSelector";
 
 // ---------------------------------------------------------------------------
 // Priority badge helpers
@@ -91,6 +92,8 @@ interface Props {
   priorityMap?: Map<string, number>;
   /** Latest simulate steps — used by CrossCwdPanel to identify cross-cwd files. */
   steps?: TimelineStep[];
+  /** Per-cwd load status from /api/simulate. Used to drive interactive toggles in tier-1-6 groups. */
+  statusMap?: Map<string, LoadStatus> | null;
   /** Row hover → tell parent to highlight graph node + dim others. */
   onRowHover: (fileId: string | null) => void;
   /** Right-click on a tree row → parent builds ContextMenuTarget. */
@@ -104,6 +107,7 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   orphanConfigs,
   priorityMap = new Map(),
   steps = [],
+  statusMap,
   onRowHover,
   onRowContextMenu,
   refetching = false,
@@ -267,6 +271,9 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
           File <em>explorer</em>
           {refetching && <span className="explorer-refetch-dot" aria-label="Updating priorities…" title="Updating priorities…" />}
         </h2>
+        <div className="explorer-cwd-slot">
+          <CwdSelector />
+        </div>
         <div className="explorer-search" role="search">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <circle cx="11" cy="11" r="8"/>
@@ -326,6 +333,7 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
             orphanIds={orphanIds}
             registerRef={registerRef}
             priorityMap={priorityMap}
+            statusMap={statusMap}
             onZoneDrop={handleDrop}
           />
         ))}
@@ -368,6 +376,7 @@ interface GroupRowProps {
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
   priorityMap: Map<string, number>;
+  statusMap?: Map<string, LoadStatus> | null;
   onZoneDrop: (e: React.DragEvent) => void;
 }
 
@@ -387,6 +396,7 @@ function GroupRow({
   orphanIds,
   registerRef,
   priorityMap,
+  statusMap,
   onZoneDrop,
 }: GroupRowProps) {
   if (query && group.children.length > 0 && !folderHasMatch(group.children)) return null;
@@ -438,6 +448,7 @@ function GroupRow({
             orphanIds={orphanIds}
             registerRef={registerRef}
             priorityMap={priorityMap}
+            statusMap={statusMap}
             groupId={group.id}
           />
         </div>
@@ -463,6 +474,7 @@ interface ItemListProps {
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
   priorityMap: Map<string, number>;
+  statusMap?: Map<string, LoadStatus> | null;
   groupId: string;
 }
 
@@ -484,6 +496,7 @@ function ItemList(props: ItemListProps) {
     orphanIds,
     registerRef,
     priorityMap,
+    statusMap,
     groupId,
   } = props;
 
@@ -501,6 +514,7 @@ function ItemList(props: ItemListProps) {
               isOrphan={orphanIds.has(item.id)}
               priority={priorityMap.get(item.id)}
               groupId={groupId}
+              statusMap={statusMap}
               onRowClick={onRowClick}
               onRowDblClick={onRowDblClick}
               onRowMouseEnter={onRowMouseEnter}
@@ -532,6 +546,7 @@ function ItemList(props: ItemListProps) {
               orphanIds={orphanIds}
               registerRef={registerRef}
               priorityMap={priorityMap}
+              statusMap={statusMap}
               groupId={groupId}
             />
           );
@@ -559,6 +574,7 @@ interface FolderRowProps {
   orphanIds: Set<string>;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
   priorityMap: Map<string, number>;
+  statusMap?: Map<string, LoadStatus> | null;
   groupId: string;
 }
 
@@ -580,6 +596,7 @@ function FolderRow({
   orphanIds,
   registerRef,
   priorityMap,
+  statusMap,
   groupId,
 }: FolderRowProps) {
   const indent = 24 + depth * 14;
@@ -630,6 +647,7 @@ function FolderRow({
           orphanIds={orphanIds}
           registerRef={registerRef}
           priorityMap={priorityMap}
+          statusMap={statusMap}
           groupId={groupId}
         />
       )}
@@ -653,12 +671,18 @@ interface FileRowProps {
   isOrphan: boolean;
   priority?: number;
   groupId: string;
+  statusMap?: Map<string, LoadStatus> | null;
   onRowClick: (f: FileEntry) => void;
   onRowDblClick: (f: FileEntry) => void;
   onRowMouseEnter: (id: string) => void;
   onRowMouseLeave: () => void;
   onRowContextMenu: (e: React.MouseEvent, f: FileEntry) => void;
   registerRef: (id: string) => (el: HTMLDivElement | null) => void;
+}
+
+// Tier groups are "tier-1" through "tier-6" — the offchain catch-all is "offchain".
+function isTierGroup(groupId: string): boolean {
+  return /^tier-[1-6]$/.test(groupId);
 }
 
 function FileRow({
@@ -668,6 +692,7 @@ function FileRow({
   isOrphan,
   priority,
   groupId,
+  statusMap,
   onRowClick,
   onRowDblClick,
   onRowMouseEnter,
@@ -675,11 +700,23 @@ function FileRow({
   onRowContextMenu,
   registerRef,
 }: FileRowProps) {
+  const lastCwd = useStore((s) => s.lastCwd);
   const indent = 24 + depth * 14 + 14;
   const iconPath = ICON_PATH_BY_KIND[node.kind] ?? null;
 
   const autoloadState = node.file.autoload_state;
   const alwaysLoaded = autoloadState === "n/a";
+
+  // In a tier-1-6 group: derive on/off from statusMap if available.
+  // OFF-chain group ("offchain") keeps the "always loaded" pill.
+  const inTier = isTierGroup(groupId);
+  const statusLoaded = statusMap ? statusMap.get(node.id) === "loaded" : false;
+
+  // For tier groups: every row gets an interactive toggle driven by statusMap.
+  // The toggle ON state = statusMap says "loaded"; OFF = everything else.
+  // For offchain group: keep the legacy alwaysLoaded pill logic.
+  const showInteractiveToggle = inTier;
+
   const autoloadApplicable = !alwaysLoaded &&
     node.kind !== "automemory" &&
     node.kind !== "plugin_registry" &&
@@ -766,12 +803,20 @@ function FileRow({
         </span>
       )}
 
-      {alwaysLoaded ? (
+      {showInteractiveToggle ? (
+        <AutoloadToggle
+          path={node.path}
+          applicable={autoloadApplicable}
+          on={statusLoaded}
+          writable={node.file.writable ?? true}
+          cwd={lastCwd ?? undefined}
+        />
+      ) : alwaysLoaded ? (
         <span
           className="explorer-autoload always"
           title="Always loaded — cannot be disabled through Observatory"
           aria-label="Always loaded"
-        />
+        >always loaded</span>
       ) : (
         <AutoloadToggle
           path={node.path}
@@ -789,14 +834,28 @@ interface AutoloadToggleProps {
   applicable: boolean;
   on: boolean;
   writable: boolean;
+  cwd?: string;
 }
 
-function AutoloadToggle({ path, applicable, on, writable }: AutoloadToggleProps) {
+function AutoloadToggle({ path, applicable, on, writable, cwd }: AutoloadToggleProps) {
   const { confirmStagedPreview } = useWritePipeline();
   const [loading, setLoading] = useState(false);
+  // When backend returns toggle_applicable: false, surface the reason as a
+  // pill tooltip instead of a functional toggle.
+  const [notApplicableReason, setNotApplicableReason] = useState<string | null>(null);
 
   if (!applicable) {
     return <span className="explorer-autoload na" aria-hidden title="Not applicable" />;
+  }
+
+  if (notApplicableReason !== null) {
+    return (
+      <span
+        className="explorer-autoload always"
+        title={notApplicableReason}
+        aria-label="Always loaded"
+      >always loaded</span>
+    );
   }
 
   async function handleClick(e: React.MouseEvent) {
@@ -804,8 +863,9 @@ function AutoloadToggle({ path, applicable, on, writable }: AutoloadToggleProps)
     if (loading || !writable) return;
     setLoading(true);
     try {
-      const preview = await postAutoloadTogglePreview(path, !on);
+      const preview = await postAutoloadTogglePreview(path, !on, cwd);
       if (!preview.toggle_applicable) {
+        setNotApplicableReason(preview.reason ?? "Not applicable for this file type");
         return;
       }
       await confirmStagedPreview(path, preview);

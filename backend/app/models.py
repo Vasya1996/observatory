@@ -202,6 +202,8 @@ class UiState(BaseModel):
     # default 320 matches the locked spec. Persisted so the user's drag-resized
     # layout survives reloads.
     tree_width: int = 320
+    # Whether the map legend overlay is expanded. Default collapsed.
+    legend_open: bool = False
 
 
 # ---------------------------------------------------------------------------

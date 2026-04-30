@@ -307,11 +307,12 @@ export interface AutoloadTogglePreviewResponse extends PreviewResponse {
 export async function postAutoloadTogglePreview(
   path: string,
   enabled: boolean,
+  cwd?: string,
 ): Promise<AutoloadTogglePreviewResponse> {
   const r = await fetch("/api/autoload-toggle-preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, enabled }),
+    body: JSON.stringify({ path, enabled, ...(cwd !== undefined ? { cwd } : {}) }),
   });
   if (!r.ok) throw new ApiError(r.status, await readError(r));
   return r.json();

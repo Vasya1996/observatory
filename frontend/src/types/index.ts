@@ -123,6 +123,8 @@ export interface UiState {
   tree_expanded?: string[];
   // Phase 4: explorer column width in px. Default 320; range 240–480.
   tree_width?: number;
+  // Map legend overlay expanded/collapsed state.
+  legend_open?: boolean;
 }
 
 // --- Non-canonical endpoint -----------------------------------------------

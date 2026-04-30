@@ -47,19 +47,12 @@ export function IconOverlay({ cy }: Props) {
 
   if (!cy) return null;
 
-  // Halo radius padding (rendered px) drawn outside the bright core for skill
-  // nodes. The bright core represents the always-loaded SKILL.md frontmatter
-  // description (costs tokens at session start); the faded halo represents the
-  // body, loaded on-demand. Visual cue for "two-layer cost", per Step 3.3.
-  const SKILL_HALO_PADDING_PX = 12;
-
   const items: {
     id: string;
     x: number;
     y: number;
     w: number;
     inner: string;
-    isSkill: boolean;
   }[] = [];
   cy.nodes().forEach((n) => {
     // Collapsed children are styled `display: none` — cy.nodes() still
@@ -71,7 +64,7 @@ export function IconOverlay({ cy }: Props) {
     if (!inner) return;
     const p = n.renderedPosition();
     const w = n.renderedOuterWidth();
-    items.push({ id: n.id(), x: p.x, y: p.y, w, inner, isSkill: kind === "skill" });
+    items.push({ id: n.id(), x: p.x, y: p.y, w, inner });
   });
 
   return (
@@ -85,29 +78,9 @@ export function IconOverlay({ cy }: Props) {
       }}
       aria-hidden
     >
-      {items.map(({ id, x, y, w, inner, isSkill }) => {
-        const haloDiameter = w + 2 * SKILL_HALO_PADDING_PX;
+      {items.map(({ id, x, y, w, inner }) => {
         return (
           <div key={id}>
-            {isSkill && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  top: 0,
-                  width: haloDiameter,
-                  height: haloDiameter,
-                  borderRadius: "50%",
-                  border: "1px solid var(--paper-faint)",
-                  opacity: 0.35,
-                  boxSizing: "border-box",
-                  transform: `translate(${x - haloDiameter / 2}px, ${
-                    y - haloDiameter / 2
-                  }px)`,
-                  willChange: "transform",
-                }}
-              />
-            )}
             <div
               style={{
                 position: "absolute",

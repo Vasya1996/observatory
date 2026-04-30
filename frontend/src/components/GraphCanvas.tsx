@@ -212,7 +212,11 @@ export function GraphCanvas({
         {
           selector: "node",
           style: {
-            "background-color": "data(color)",
+            // Default fill is grey — kind-color is only applied via
+            // .status-loaded (locked rule #32 update 2026-04-30).
+            // Without a cwd all nodes are grey; with a cwd only loaded
+            // nodes re-acquire amber/paper.
+            "background-color": "#3a3a40",
             "background-opacity": 1,
             width: "data(size)",
             height: "data(size)",
@@ -312,8 +316,12 @@ export function GraphCanvas({
         // Listed BEFORE `.dim` so hover-dim wins on conflict — cytoscape
         // applies later rules with higher priority.
         {
+          // Loaded nodes re-acquire their kind-color (amber/paper) from
+          // data(color). Default is grey (#3a3a40); this rule overrides it
+          // for the loaded set. Orange on map = autoloaded into active session.
           selector: "node.status-loaded",
           style: {
+            "background-color": "data(color)",
             "border-width": 1.5,
             "border-color": C.paper,
             "border-style": "solid",

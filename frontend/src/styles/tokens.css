@@ -145,16 +145,13 @@ body {
    before the user notices the chevron. */
 
 .cwd-target {
-  position: absolute;
-  top: 16px;
-  left: 16px;
+  position: relative;
   z-index: 30;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 11px;
   color: var(--paper-dim);
-  /* The trigger sets its own min-width; the panel inherits via top: 100%. */
-  min-width: 248px;
-  max-width: 360px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cwd-target-trigger {
@@ -3977,6 +3974,21 @@ body {
   color: var(--amber);
 }
 
+/* CwdSelector slot inside the explorer header — inline, full-width, under the title. */
+.explorer-cwd-slot {
+  margin: 0 16px 14px 16px;
+  position: relative;
+}
+.explorer-cwd-slot .cwd-target {
+  position: relative;
+  top: unset;
+  left: unset;
+  z-index: 30;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
 /* Tiny amber pulse dot shown while post-write /api/simulate is refetching. */
 .explorer-refetch-dot {
   display: inline-block;
@@ -4267,25 +4279,25 @@ body {
   display: block;
   flex-shrink: 0;
 }
-/* "always loaded" state — non-interactive label for kinds that cannot be disabled */
+/* "always loaded" state — non-interactive label for kinds that cannot be disabled.
+   Text is rendered as direct JSX children (no pseudo-element) so it actually shows. */
 .explorer-autoload.always {
+  display: inline-flex;
+  align-items: center;
   width: auto;
   height: auto;
-  background: var(--paper-faint);
-  color: var(--ink);
-  border: none;
+  background: rgba(110, 106, 94, 0.22);
+  color: var(--paper-faint);
+  border: 1px solid var(--line);
   border-radius: 3px;
-  font-family: var(--mono);
+  font-family: "JetBrains Mono", monospace;
   font-size: 9px;
   letter-spacing: 0.04em;
   padding: 1px 5px;
   flex-shrink: 0;
   cursor: default;
-  display: inline-block;
-}
-.explorer-autoload.always::after {
-  content: "always loaded";
-  display: block;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 /* pending state — dashed border indicates "wired but not yet active" */
 .explorer-autoload.pending {
@@ -4440,4 +4452,119 @@ body {
   height: 1px;
   margin: 8px 0 4px 0;
   background: var(--line);
+}
+
+/* ---------- Map legend overlay (locked rule #60) ----------
+   Top-right of .map-canvas-area. Collapsed = 28x28 circular ? button.
+   Expanded = 320px panel with internal scroll. Z-index 35 (above canvas, below modals). */
+
+.legend-toggle-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--paper-faint);
+  background: rgba(17, 17, 22, 0.88);
+  color: var(--paper-dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+  line-height: 1;
+  padding: 0;
+}
+.legend-toggle-btn:hover {
+  border-color: var(--paper);
+  color: var(--paper);
+  background: rgba(17, 17, 22, 0.96);
+}
+
+.legend-panel {
+  width: 320px;
+  max-height: calc(100vh - 100px);
+  background: var(--ink-2);
+  border: 1px solid var(--paper-faint);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.legend-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px dashed var(--line);
+  flex-shrink: 0;
+}
+
+.legend-head-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+}
+
+.legend-close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--paper-faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  transition: color 120ms ease;
+}
+.legend-close:hover { color: var(--paper); }
+
+.legend-body {
+  padding: 10px 14px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.legend-body::-webkit-scrollbar { width: 4px; }
+.legend-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
+
+.legend-section-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+.legend-row {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--line-soft);
+}
+.legend-row:last-child { border-bottom: none; }
+
+.legend-swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+
+.legend-text {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 11px;
+  color: var(--paper-dim);
+  line-height: 1.4;
 }
