@@ -63,12 +63,6 @@ function homePath(): string {
   return "/home/voxdecaelo";
 }
 
-function expandHome(p: string): string {
-  if (p.startsWith("~/")) return homePath() + "/" + p.slice(2);
-  if (p === "~") return homePath();
-  return p;
-}
-
 function assignSlot(file: FileEntry, cwd: string | null): SlotKey {
   const p = file.path;
 
@@ -156,9 +150,6 @@ export function buildSlotMap(
   // load-order chain, not mention-graph reachability).
   const onDemandIds = collectOnDemandIds(steps, edges, simulatedIds);
 
-  // Union: every simulated file PLUS every mention-reachable file.
-  const relevantIds = new Set<string>([...simulatedIds, ...onDemandIds]);
-
   // Build slot map.
   const result: SlotMap = {
     managed: [],
@@ -169,12 +160,25 @@ export function buildSlotMap(
     ondemand: [],
   };
 
-  for (const id of relevantIds) {
+  // First pass: assign files from the simulate timeline (slots 1-5 priority).
+  // Track which ids land in a named slot so BFS-only entries don't duplicate.
+  const assignedInNamedSlot = new Set<string>();
+
+  for (const id of simulatedIds) {
     const file = fileById.get(id);
     if (!file) continue;
     const step = stepByFileId.get(id);
     const slot = assignSlot(file, cwd);
     result[slot].push({ file, step });
+    if (slot !== "ondemand") assignedInNamedSlot.add(id);
+  }
+
+  // Second pass: on-demand BFS results only if not already in a named slot.
+  for (const id of onDemandIds) {
+    if (assignedInNamedSlot.has(id)) continue;
+    const file = fileById.get(id);
+    if (!file) continue;
+    result.ondemand.push({ file, step: undefined });
   }
 
   // Sort each slot: steps first (in idx order), then mention-only (no step).

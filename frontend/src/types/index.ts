@@ -19,6 +19,8 @@ export type ViewKey = "map" | "sim" | "ed" | "ext";
 
 export type MapMode = "graph" | "tree";
 
+export type SimulatorMode = "per-cwd" | "all-cwds";
+
 export interface Issue {
   severity: "info" | "warning" | "error";
   code: string;
@@ -111,6 +113,27 @@ export interface UiState {
   show_internal?: boolean;
   map_mode?: MapMode;
   inspector_open?: boolean;
+  simulator_mode?: SimulatorMode;
+}
+
+// --- Non-canonical endpoint -----------------------------------------------
+
+export type NonCanonicalReason =
+  | "loaded_via_at_import"
+  | "outside_canonical_dir"
+  | "wrong_filename_at_canonical_path";
+
+export interface NonCanonicalEntry {
+  file_path: string;
+  slot: string;
+  canonical_path: string;
+  reason: NonCanonicalReason;
+  importer_path?: string | null;
+  importer_line?: number | null;
+}
+
+export interface NonCanonicalResponse {
+  non_canonical: NonCanonicalEntry[];
 }
 
 // --- Extensions view (mirrors backend ExtensionsResponse shape) -----------

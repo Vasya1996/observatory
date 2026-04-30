@@ -24,6 +24,8 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
   const setShowInternal = useStore((s) => s.setShowInternal);
   const mapMode = useStore((s) => s.mapMode);
   const setMapMode = useStore((s) => s.setMapMode);
+  const simulatorMode = useStore((s) => s.simulatorMode);
+  const setSimulatorMode = useStore((s) => s.setSimulatorMode);
   const pushToast = useStore((s) => s.pushToast);
 
   const { requestWrite } = useWritePipeline();
@@ -160,6 +162,28 @@ export function HeaderChrome({ fileCount, edgeCount, watcherLive }: Props) {
                 onClick={() => setMapMode("tree")}
               >
                 <span className="num">01b</span>Tree
+              </button>
+            </span>
+          )}
+          {view === "sim" && (
+            <span className="subtabs" role="tablist" aria-label="Simulator mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={simulatorMode === "per-cwd"}
+                className={`subtab${simulatorMode === "per-cwd" ? " on" : ""}`}
+                onClick={() => setSimulatorMode("per-cwd")}
+              >
+                <span className="num">02a</span>Per-cwd
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={simulatorMode === "all-cwds"}
+                className={`subtab${simulatorMode === "all-cwds" ? " on" : ""}`}
+                onClick={() => setSimulatorMode("all-cwds")}
+              >
+                <span className="num">02b</span>All-cwds
               </button>
             </span>
           )}

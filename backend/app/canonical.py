@@ -23,6 +23,22 @@ SLOT_AUTO_MEMORY = "auto-memory"
 SLOT_ON_DEMAND = "on-demand"
 SLOT_UNKNOWN = "unknown"
 
+# Kinds that are always canonical at their actual location — they don't
+# have a single "correct" place in the load chain the way claude_md and
+# rule files do. Flagging them as non-canonical would produce false
+# positives (e.g. MEMORY.md loaded via @-import is still correct).
+_ALWAYS_CANONICAL_KINDS = frozenset({
+    "memory",
+    "memory_index",
+    "skill",
+    "plugin_manifest",
+    "plugin_registry",
+    "automemory",
+    "settings",
+    "mcp",
+    "script",
+})
+
 
 def _is_under(path: Path, parent: Path) -> bool:
     try:
@@ -32,11 +48,36 @@ def _is_under(path: Path, parent: Path) -> bool:
         return False
 
 
+def _slot_for_always_canonical(fp: Path, cwd: Path) -> str:
+    """Return the best-fit slot name for a file that is always canonical.
+
+    Used so the slot column in the Phase 3 ribbon still shows a sensible
+    category even though we never flag these kinds as non-canonical.
+    """
+    claude_dir = config.CLAUDE_DIR
+    if _is_under(fp, config.AUTO_MEMORY_DIR):
+        return SLOT_AUTO_MEMORY
+    if _is_under(fp, claude_dir / "knowledge") or _is_under(fp, claude_dir / "skills"):
+        return SLOT_USER_GLOBAL
+    if _is_under(fp, claude_dir / "remote" / "plugins"):
+        return SLOT_USER_GLOBAL
+    if _is_under(fp, claude_dir):
+        return SLOT_USER_GLOBAL
+    # Scripts or files under a cwd live in the project slot.
+    try:
+        fp.relative_to(cwd)
+        return SLOT_PROJECT
+    except ValueError:
+        pass
+    return SLOT_ON_DEMAND
+
+
 def classify_step(
     file_path_str: str,
     matched_on: Optional[str],
     status: str,
     cwd: Path,
+    kind: Optional[str] = None,
 ) -> tuple[str, bool, str, str]:
     """Return (slot, is_canonical, canonical_path, reason).
 
@@ -53,8 +94,10 @@ def classify_step(
       auto-memory  : ~/.claude/projects/<project>/memory/**
       on-demand    : paths-scoped rules, nested <sub>/CLAUDE.md, topical memory
 
-    A file is non-canonical when it appears in a slot but was pulled in via
-    @-import from outside that slot's normal root (matched_on == "@import").
+    Only `claude_md` and `rule` kinds can return is_canonical=False; all other
+    kinds are always treated as canonical at their actual location because they
+    don't have a single "correct" load-chain slot (memory files, skills, plugins,
+    settings, mcp, scripts are correct wherever they live).
     """
     home = config.HOME
     claude_dir = config.CLAUDE_DIR
@@ -66,6 +109,11 @@ def classify_step(
         fp = fp.resolve()
     except OSError:
         pass
+
+    # Non-claude_md / non-rule kinds are always canonical at their actual path.
+    if kind in _ALWAYS_CANONICAL_KINDS:
+        slot = _slot_for_always_canonical(fp, cwd)
+        return slot, True, str(fp), ""
 
     managed_path = config.os_managed_claude_md_path()
 

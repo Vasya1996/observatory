@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,12 +18,20 @@ from .content_hash import body_contains, sha256_of_body
 from .markdown_merge import plan_merge
 from .models import (
     CwdEntry,
+    DeleteConfirmRequest,
+    DeleteConfirmResponse,
+    DeletePreviewRequest,
+    DeletePreviewResponse,
+    DeleteUndoRequest,
+    DeleteUndoResponse,
     ExtensionsResponse,
     FileReadResponse,
     ImportRef,
     IndexResponse,
     McpCard,
     MigrateFilePlan,
+    MigrateFinalizeRequest,
+    MigrateFinalizeResponse,
     MigratePlan,
     MigratePreviewRequest,
     MigratePreviewResponse,
@@ -54,6 +63,10 @@ from .watcher import IndexCache
 # backend restart (which is the desired behaviour: stale tokens get purged).
 PENDING_WRITES: dict[str, PendingWrite] = {}
 PENDING_WRITE_TTL = timedelta(minutes=5)
+
+# In-memory pending-delete store. Same TTL mechanics as PENDING_WRITES.
+# {confirm_token: {"path": str, "snapshot_id": str, "created_at": datetime}}
+PENDING_DELETES: dict[str, dict] = {}
 
 # Maps migration_id -> list of confirm_tokens that belong to that batch.
 # Used to verify whether a failing write is part of a migration batch.
@@ -425,15 +438,23 @@ def get_non_canonical(req: Request, cwd: str = Query(...)) -> NonCanonicalRespon
     from .simulator import simulate as _simulate
     sim_resp = _simulate(cwd_resolved, files, edges)
 
-    # Build a lookup from display path → file entry for importer resolution.
+    # Build lookups from display path and abs path → file entry.
     by_display: dict[str, str] = {f.display: f.path for f in files}
+    by_path: dict[str, str] = {f.path: f.kind for f in files}  # abs_path → kind
 
     entries: list[NonCanonicalEntry] = []
     for step in sim_resp.steps:
         if step.status not in ("loaded", "conditional"):
             continue
+        # Resolve display path to absolute for kind lookup.
+        fp_raw = step.file_path
+        if fp_raw.startswith("~/") or fp_raw == "~":
+            fp_abs_str = str((Path.home() / fp_raw[2:]).resolve())
+        else:
+            fp_abs_str = str(Path(fp_raw).resolve())
+        step_kind = by_path.get(fp_abs_str)
         slot, is_canon, canon_path, reason = canonical.classify_step(
-            step.file_path, step.matched_on, step.status, cwd_resolved
+            step.file_path, step.matched_on, step.status, cwd_resolved, kind=step_kind
         )
         if is_canon:
             continue
@@ -449,15 +470,9 @@ def get_non_canonical(req: Request, cwd: str = Query(...)) -> NonCanonicalRespon
                 importer_path = by_display.get(imp_display, imp_display)
                 if m.group(2):
                     importer_line = int(m.group(2))
-        # Resolve display path for entry.
-        fp_raw = step.file_path
-        if fp_raw.startswith("~/") or fp_raw == "~":
-            fp_abs = str((Path.home() / fp_raw[2:]).resolve())
-        else:
-            fp_abs = str(Path(fp_raw).resolve())
         entries.append(
             NonCanonicalEntry(
-                file_path=fp_abs,
+                file_path=fp_abs_str,
                 slot=slot,
                 canonical_path=canon_path,
                 reason=reason,  # type: ignore[arg-type]
@@ -700,6 +715,169 @@ def post_migrate_preview(
             heading_collisions=heading_collisions,
         ),
     )
+
+
+@router.post("/migrate-finalize", response_model=MigrateFinalizeResponse)
+def post_migrate_finalize(body: MigrateFinalizeRequest) -> MigrateFinalizeResponse:
+    """Commit or roll back a migration batch.
+
+    commit:   drops the MIGRATION_SNAPSHOTS log for the batch; no file I/O.
+              Returns {finalized: true}.
+    rollback: iterates the batch snapshot log in reverse, restores each file
+              from its snapshot bytes via atomic_write. Returns {rolled_back: N}.
+              On partial failure: returns 500 with partial_rollback: {restored, failed}.
+
+    Unknown migration_id → 404.
+    """
+    from .writer import MIGRATION_SNAPSHOTS, restore_snapshot
+
+    if body.migration_id not in MIGRATION_SNAPSHOTS:
+        raise HTTPException(status_code=404, detail="migration_id not found")
+
+    if body.status == "commit":
+        MIGRATION_SNAPSHOTS.pop(body.migration_id, None)
+        MIGRATION_TOKENS.pop(body.migration_id, None)
+        return MigrateFinalizeResponse(finalized=True)
+
+    # Rollback: restore in reverse, collect results.
+    entries = list(MIGRATION_SNAPSHOTS.get(body.migration_id, []))
+    restored: list[str] = []
+    failed: list[str] = []
+    for path_str, snap_id in reversed(entries):
+        try:
+            restore_snapshot(Path(path_str), snap_id)
+            restored.append(path_str)
+        except Exception:
+            failed.append(path_str)
+
+    MIGRATION_SNAPSHOTS.pop(body.migration_id, None)
+    MIGRATION_TOKENS.pop(body.migration_id, None)
+
+    if failed:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "partial_rollback": {"restored": restored, "failed": failed},
+            },
+        )
+    return MigrateFinalizeResponse(rolled_back=len(restored))
+
+
+def _is_under_writable_creation_zone(target: Path) -> bool:
+    """Same creation-zone check as _is_under_allowed_creation_zone, used for
+    delete permission — only files under the same roots where Observatory is
+    allowed to create/modify files can be deleted through the UI.
+    """
+    return _is_under_allowed_creation_zone(target)
+
+
+@router.post("/delete", response_model=DeletePreviewResponse)
+def post_delete(req: Request, body: DeletePreviewRequest) -> DeletePreviewResponse:
+    """Preview a file deletion: take a snapshot and return a confirm_token.
+
+    Does NOT delete on this call — the caller must follow up with
+    /api/delete-confirm. Enforces the same writable-kind and creation-zone
+    boundaries as /api/preview.
+
+    Only files where FileEntry.writable is True AND the path is under a writable
+    creation root are deletable — 403 otherwise.
+    """
+    _purge_expired_pending()
+    target = Path(body.path).expanduser().resolve()
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"file not found: {body.path}")
+
+    files, _, _ = _cache(req).snapshot()
+    in_scope = {Path(f.path): f for f in files}
+    entry = in_scope.get(target)
+    if entry is None:
+        raise HTTPException(status_code=400, detail=f"path not in scanned set: {body.path}")
+    if not entry.writable:
+        raise HTTPException(
+            status_code=403,
+            detail=f"file kind '{entry.kind}' is not writable",
+        )
+    if not _is_under_writable_creation_zone(target):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "delete only allowed under ~/.claude/rules/, "
+                "~/.claude/knowledge/, or <cwd>/.claude/rules/"
+            ),
+        )
+
+    try:
+        snapshot_id = writer.take_snapshot(target)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"snapshot failed: {e}")
+
+    confirm_token = uuid.uuid4().hex
+    PENDING_DELETES[confirm_token] = {
+        "path": str(target),
+        "snapshot_id": snapshot_id,
+        "created_at": datetime.now(timezone.utc),
+    }
+    return DeletePreviewResponse(confirm_token=confirm_token, snapshot_id=snapshot_id)
+
+
+@router.post("/delete-confirm", response_model=DeleteConfirmResponse)
+def post_delete_confirm(req: Request, body: DeleteConfirmRequest) -> DeleteConfirmResponse:
+    """Execute a previewed deletion after the user confirms.
+
+    Validates the confirm_token (5-min TTL), then os.unlink()s the file.
+    Triggers IndexCache.rebuild_sync() after success.
+    """
+    pending = PENDING_DELETES.get(body.confirm_token)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="confirm_token unknown or expired")
+    now = datetime.now(timezone.utc)
+    if now - pending["created_at"] > PENDING_WRITE_TTL:
+        PENDING_DELETES.pop(body.confirm_token, None)
+        raise HTTPException(status_code=404, detail="confirm_token expired")
+
+    target = Path(pending["path"])
+    snapshot_id = pending["snapshot_id"]
+
+    if not target.is_file():
+        PENDING_DELETES.pop(body.confirm_token, None)
+        raise HTTPException(status_code=409, detail="file no longer exists")
+
+    try:
+        os.unlink(target)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"delete failed: {e}")
+
+    PENDING_DELETES.pop(body.confirm_token, None)
+
+    try:
+        _cache(req).rebuild_sync()
+    except Exception:
+        pass
+
+    return DeleteConfirmResponse(deleted=True, snapshot_id=snapshot_id)
+
+
+@router.post("/delete-undo", response_model=DeleteUndoResponse)
+def post_delete_undo(req: Request, body: DeleteUndoRequest) -> DeleteUndoResponse:
+    """Restore a deleted file from its snapshot (undo a delete-confirm).
+
+    Reads the snapshot bytes and atomic_writes them back to the original path.
+    Triggers IndexCache.rebuild_sync() after success.
+    """
+    target = Path(body.path).expanduser().resolve()
+    try:
+        writer.restore_snapshot(target, body.snapshot_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"restore failed: {e}")
+
+    try:
+        _cache(req).rebuild_sync()
+    except Exception:
+        pass
+
+    return DeleteUndoResponse(restored=True)
 
 
 @router.get("/events")

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { postState } from "../api/client";
-import type { Edge, FileEntry, MapMode, UiState, ViewKey } from "../types";
+import type { Edge, FileEntry, MapMode, SimulatorMode, UiState, ViewKey } from "../types";
 
 // --- Phase 2 write pipeline shapes ----------------------------------------
 
@@ -66,6 +66,9 @@ interface Store {
   mapMode: MapMode;
   setMapMode: (v: MapMode) => void;
 
+  simulatorMode: SimulatorMode;
+  setSimulatorMode: (v: SimulatorMode) => void;
+
   hydrate: (s: UiState) => void;
 
   // --- Phase 2 write pipeline (NOT persisted to /api/state) ----------------
@@ -87,6 +90,7 @@ function snapshot(s: Store): UiState {
     show_internal: s.showInternal,
     map_mode: s.mapMode,
     inspector_open: s.inspectorOpen,
+    simulator_mode: s.simulatorMode,
   };
 }
 
@@ -164,6 +168,12 @@ export const useStore = create<Store>((set, get) => ({
     schedulePersist(get);
   },
 
+  simulatorMode: "per-cwd",
+  setSimulatorMode: (v) => {
+    set({ simulatorMode: v });
+    schedulePersist(get);
+  },
+
   hydrate: (s) =>
     set({
       pins: s.pins ?? {},
@@ -172,6 +182,7 @@ export const useStore = create<Store>((set, get) => ({
       showInternal: s.show_internal ?? false,
       mapMode: s.map_mode ?? "graph",
       inspectorOpen: s.inspector_open ?? false,
+      simulatorMode: s.simulator_mode ?? "per-cwd",
     }),
 
   writeIntent: null,

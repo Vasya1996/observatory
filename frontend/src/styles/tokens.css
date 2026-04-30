@@ -1803,21 +1803,304 @@ body {
   font-weight: 400;
 }
 
-.sim-noncanon-badge {
+.sim-noncanon-badge-wrap {
   margin-left: auto;
+  position: relative;
+}
+
+.sim-noncanon-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(240, 168, 58, 0.45);
   border-radius: 999px;
   background: var(--ink-2);
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   letter-spacing: 0.08em;
-  color: var(--paper-faint);
+  color: var(--amber);
   cursor: default;
-  /* When wired in step 3, cursor becomes pointer and badge highlights amber */
+}
+
+.sim-noncanon-badge-btn {
+  appearance: none;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.sim-noncanon-badge-btn:hover,
+.sim-noncanon-badge-btn.open {
+  background: rgba(240, 168, 58, 0.08);
+}
+
+/* Non-canonical floating panel (same visual language as proposals-panel) */
+.sim-noncanon-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 420px;
+  max-height: 480px;
+  overflow-y: auto;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  z-index: 80;
+  padding: 12px 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.sim-noncanon-panel::-webkit-scrollbar { width: 6px; }
+.sim-noncanon-panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+.sim-noncanon-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 16px 10px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  border-bottom: 1px dashed var(--line);
+}
+
+.sim-noncanon-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sim-noncanon-panel-row {
+  padding: 12px 16px;
+  border-bottom: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sim-noncanon-panel-row:last-child { border-bottom: none; }
+
+.sim-noncanon-panel-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.sim-noncanon-panel-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.sim-noncanon-slot {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(240, 168, 58, 0.1);
+  color: var(--amber);
+}
+
+.sim-noncanon-reason {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+}
+
+.sim-noncanon-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sim-noncanon-open-btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--paper-dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.sim-noncanon-open-btn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+/* Non-canonical card overlay — amber border + faint tint */
+.sim-card.non-canonical {
+  border-left: 1px solid var(--amber);
+  background: rgba(240, 168, 58, 0.06);
+  position: relative;
+}
+.sim-card.non-canonical.selected {
+  border-left: 2px solid var(--amber);
+  padding-left: 12px;
+}
+
+/* Warning glyph — top-right of card */
+.sim-card-noncanon-glyph {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: var(--amber);
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+  z-index: 2;
+}
+
+/* Tooltip anchored to the glyph */
+.sim-card-noncanon-tooltip {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 260px;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--paper-dim);
+  box-shadow: var(--shadow);
+  z-index: 50;
+  pointer-events: none;
+}
+.sim-card-noncanon-tooltip b {
+  color: var(--paper-faint);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9px;
+}
+
+/* ============================================================ */
+/* SIMULATOR — all-cwds overview table (02b sub-tab)            */
+/* ============================================================ */
+
+.sim-allcwds-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 40px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-faint);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.sim-allcwds-wrap {
+  overflow-x: auto;
+  padding: 24px 28px 80px 28px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.sim-allcwds-wrap::-webkit-scrollbar { height: 6px; }
+.sim-allcwds-wrap::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+.sim-allcwds-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+
+.sim-allcwds-table thead tr {
+  border-bottom: 1px solid var(--line);
+}
+
+.sim-allcwds-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.sim-allcwds-cwd-col {
+  min-width: 220px;
+}
+
+.sim-allcwds-slot-col {
+  min-width: 110px;
+  text-align: center !important;
+}
+
+.sim-allcwds-row {
+  border-bottom: 1px solid var(--line-soft);
+  transition: background 80ms ease;
+}
+.sim-allcwds-row:hover {
+  background: rgba(240, 168, 58, 0.03);
+}
+.sim-allcwds-row:last-child {
+  border-bottom: none;
+}
+
+.sim-allcwds-cwd-cell {
+  padding: 9px 12px;
+}
+
+.sim-allcwds-cwd-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper);
+  white-space: nowrap;
+}
+
+.sim-allcwds-cell {
+  padding: 8px 12px;
+  text-align: center;
+  border-radius: 4px;
+  cursor: default;
+  transition: filter 80ms ease;
+}
+
+.sim-allcwds-cell-empty {
+  border: 1px solid var(--line-soft);
+  color: var(--paper-faint);
+  opacity: 0.4;
+}
+
+.sim-allcwds-cell-green {
+  background: rgba(150, 200, 150, 0.12);
+  border: 1px solid rgba(150, 200, 150, 0.2);
+  cursor: pointer;
+}
+.sim-allcwds-cell-green:hover {
+  filter: brightness(1.25);
+}
+
+.sim-allcwds-cell-amber {
+  background: rgba(240, 168, 58, 0.12);
+  border: 1px solid rgba(240, 168, 58, 0.25);
+  cursor: pointer;
+}
+.sim-allcwds-cell-amber:hover {
+  filter: brightness(1.25);
+}
+
+.sim-allcwds-cell-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper);
+  font-weight: 400;
 }
 
 /* 6-column grid — all columns equal width, scroll as one page. */

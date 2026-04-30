@@ -3,6 +3,7 @@ import type {
   ExtensionsResponse,
   FileReadResponse,
   IndexResponse,
+  NonCanonicalResponse,
   PathProposalsResponse,
   SimulatorResponse,
   UiState,
@@ -51,6 +52,12 @@ export async function fetchExtensions(): Promise<ExtensionsResponse> {
 export async function fetchPathProposals(): Promise<PathProposalsResponse> {
   const r = await fetch("/api/paths-proposals");
   if (!r.ok) throw new Error(`/api/paths-proposals ${r.status}`);
+  return r.json();
+}
+
+export async function fetchNonCanonical(cwd: string): Promise<NonCanonicalResponse> {
+  const r = await fetch(`/api/non-canonical?cwd=${encodeURIComponent(cwd)}`);
+  if (!r.ok) throw new Error(`/api/non-canonical ${r.status}`);
   return r.json();
 }
 

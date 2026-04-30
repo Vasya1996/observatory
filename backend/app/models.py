@@ -174,6 +174,10 @@ class UiState(BaseModel):
     # tucks it away. Persisted so the layout survives reloads and the canvas
     # boots in the same width the user left it.
     inspector_open: bool = False
+    # Sub-mode of the Simulator view: "per-cwd" = 6-column ribbon for the
+    # active cwd (default), "all-cwds" = 12×6 overview table. Persisted so
+    # the chosen sub-tab survives reloads.
+    simulator_mode: Literal["per-cwd", "all-cwds"] = "per-cwd"
 
 
 # ---------------------------------------------------------------------------
@@ -324,3 +328,48 @@ class MigratePlan(BaseModel):
 
 # Needed for forward-reference resolution.
 MigratePreviewResponse.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 wave 2 — migration finalize + delete pipeline
+# ---------------------------------------------------------------------------
+
+
+class MigrateFinalizeRequest(BaseModel):
+    migration_id: str
+    status: Literal["commit", "rollback"]
+
+
+class MigrateFinalizeResponse(BaseModel):
+    finalized: bool = False
+    rolled_back: Optional[int] = None
+    # Set on partial rollback failure: which paths restored vs failed.
+    partial_rollback: Optional[dict[str, list[str]]] = None
+
+
+class DeletePreviewRequest(BaseModel):
+    path: str
+
+
+class DeletePreviewResponse(BaseModel):
+    confirm_token: str
+    snapshot_id: str
+
+
+class DeleteConfirmRequest(BaseModel):
+    confirm_token: str
+
+
+class DeleteConfirmResponse(BaseModel):
+    deleted: bool
+    snapshot_id: str
+
+
+class DeleteUndoRequest(BaseModel):
+    snapshot_id: str
+    # Original path needed to know where to restore the snapshot.
+    path: str
+
+
+class DeleteUndoResponse(BaseModel):
+    restored: bool
