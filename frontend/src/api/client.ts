@@ -256,3 +256,72 @@ export async function postSuppress(cwd: string, suppressed: boolean): Promise<Su
   if (!r.ok) throw new ApiError(r.status, await readError(r));
   return r.json();
 }
+
+// --- Tier 2 deep-verify API -------------------------------------------------
+
+export interface Tier2Preflight {
+  ok: boolean;
+  reason: string;
+  disable_all_hooks: boolean;
+  allow_managed_only: boolean;
+  nfs: boolean;
+}
+
+export interface Tier2Status {
+  available: boolean;
+  installed: boolean;
+  reason: string;
+  preflight: Tier2Preflight;
+  jsonl_path: string;
+  hook_script: string;
+  events_captured: number;
+}
+
+export async function fetchTier2Status(): Promise<Tier2Status> {
+  const r = await fetch("/api/tier2-status");
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export async function postTier2InstallPreview(): Promise<PreviewResponse> {
+  const r = await fetch("/api/tier2-install-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export async function postTier2UninstallPreview(): Promise<PreviewResponse> {
+  const r = await fetch("/api/tier2-uninstall-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export interface Tier2CompareResult {
+  cwd: string;
+  session_id: string | null;
+  hook_events_found: number;
+  results: Array<{
+    file_path: string;
+    outcome: "green" | "neutral" | "red";
+    memory_type: string | null;
+    load_reason: string | null;
+    in_simulator: boolean;
+    in_hook: boolean;
+  }>;
+}
+
+export async function fetchTier2Compare(cwd: string, sessionId?: string): Promise<Tier2CompareResult> {
+  const url = sessionId
+    ? `/api/tier2-compare?cwd=${encodeURIComponent(cwd)}&session_id=${encodeURIComponent(sessionId)}`
+    : `/api/tier2-compare?cwd=${encodeURIComponent(cwd)}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}

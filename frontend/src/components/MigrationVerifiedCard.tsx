@@ -164,7 +164,10 @@ function CardBanner({ card, onDismiss, onUndo }: CardBannerProps) {
 
         <div className="mig-verified-row muted">
           <span className="mig-row-icon">—</span>
-          <span>Deep checks (live probe): not available on this Claude version.</span>
+          <span>
+            Deep checks (live probe): enable via the Simulator tab to verify Claude
+            actually loads the file after the move.
+          </span>
         </div>
 
         <div className="mig-verified-footer">

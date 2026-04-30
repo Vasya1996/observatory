@@ -22,6 +22,7 @@
  */
 import { useCallback } from "react";
 import { ApiError, postPreview, postWrite } from "../api/client";
+import type { PreviewResponse } from "../api/client";
 import { useStore } from "../state/store";
 import type { WritePatch } from "../state/store";
 
@@ -156,5 +157,69 @@ export function useWritePipeline() {
     [setWriteIntent, pushToast],
   );
 
-  return { requestWrite };
+  /**
+   * Confirm a pre-staged preview (from a specialised backend endpoint like
+   * /api/tier2-install-preview). Shows the DiffModal, then fires /api/write
+   * with the provided confirm_token. Locked rule #36 still holds — DiffModal
+   * is shown before any write completes.
+   *
+   * path is used only for display in the DiffModal; the actual write goes to
+   * the token's stored path on the backend.
+   */
+  const confirmStagedPreview = useCallback(
+    async (
+      path: string,
+      preview: PreviewResponse,
+    ): Promise<WriteResult> => {
+      const syntheticPatch: WritePatch = { path, newContent: "" };
+      CURRENT_PREVIEWS = [
+        {
+          patch: syntheticPatch,
+          confirmToken: preview.confirm_token,
+          diff: preview.diff,
+          baseHash: preview.base_hash,
+          isCreation: preview.is_creation,
+        },
+      ];
+
+      const verdict = await new Promise<"confirm" | "cancel">((resolve) => {
+        setWriteIntent({
+          patches: [syntheticPatch],
+          softConfirm: false,
+          onConfirm: () => resolve("confirm"),
+          onCancel: () => resolve("cancel"),
+        });
+      });
+
+      if (verdict === "cancel") {
+        setWriteIntent(null);
+        CURRENT_PREVIEWS = [];
+        return { ok: false, reason: "cancelled" };
+      }
+
+      try {
+        const r = await postWrite(preview.confirm_token);
+        setWriteIntent(null);
+        CURRENT_PREVIEWS = [];
+        pushToast({ kind: "success", message: `Wrote ${path.split("/").pop()}` });
+        return { ok: true, snapshotIds: [r.snapshot_id] };
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : 0;
+        const reason = e instanceof Error ? e.message : String(e);
+        setWriteIntent(null);
+        CURRENT_PREVIEWS = [];
+        pushToast({
+          kind: "error",
+          message:
+            status === 409
+              ? "Couldn't save — the file was changed somewhere else, please reload"
+              : `Save failed: ${reason}`,
+        });
+        return { ok: false, reason };
+      }
+    },
+    [setWriteIntent, pushToast],
+  );
+
+  return { requestWrite, confirmStagedPreview };
 }

@@ -7,7 +7,9 @@ import type { ContextMenuTarget } from "../components/ContextMenu";
 import { NormalizeWizardModal, type NormalizeMode } from "../components/NormalizeWizardModal";
 import { MigrationVerifiedCard, persistMigrationCard } from "../components/MigrationVerifiedCard";
 import type { MigrationCommitData } from "../components/NormalizeWizardModal";
-import { fetchCwds, fetchNonCanonical, fetchSimulate, postSuppress } from "../api/client";
+import { fetchCwds, fetchNonCanonical, fetchSimulate, fetchTier2Status, postSuppress } from "../api/client";
+import type { Tier2Status } from "../api/client";
+import { useWritePipeline } from "../hooks/useWritePipeline";
 import { useStore } from "../state/store";
 import {
   buildSlotMap,
@@ -78,6 +80,7 @@ export function SimulatorView() {
   const select = useStore((s) => s.select);
   const simulatorMode = useStore((s) => s.simulatorMode);
   const setSimulatorMode = useStore((s) => s.setSimulatorMode);
+  const { requestWrite, confirmStagedPreview } = useWritePipeline();
 
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [stats, setStats] = useState<SimulatorStats | null>(null);
@@ -96,7 +99,10 @@ export function SimulatorView() {
   const [allCwdNonCanon, setAllCwdNonCanon] = useState<Map<string, NonCanonicalEntry[]>>(new Map());
   const [allCwdLoading, setAllCwdLoading] = useState(false);
 
-  // Tier 2 banner dismissal (localStorage-persisted).
+  // Tier 2 status (fetched from backend; null while loading).
+  const [tier2Status, setTier2Status] = useState<Tier2Status | null>(null);
+  // Tier 2 banner dismissal (localStorage-persisted — only hides the
+  // "not installed" informational note, not the enable button).
   const [tier2BannerDismissed, setTier2BannerDismissed] = useState(
     () => localStorage.getItem(TIER2_BANNER_KEY) === "1",
   );
@@ -104,6 +110,34 @@ export function SimulatorView() {
     localStorage.setItem(TIER2_BANNER_KEY, "1");
     setTier2BannerDismissed(true);
   };
+
+  useEffect(() => {
+    fetchTier2Status().then(setTier2Status).catch(() => {});
+  }, []);
+
+  // Enable Tier 2 — calls the specialised backend preview endpoint (which
+  // generates the new settings.json content with the hook entry), then shows
+  // the DiffModal via confirmStagedPreview. Locked rule #36: DiffModal before
+  // any write.
+  const enableTier2 = useCallback(async () => {
+    const settingsEntry = files.find(
+      (f) => f.kind === "settings" && f.display.endsWith("settings.json") && !f.display.endsWith("settings.local.json"),
+    );
+    if (!settingsEntry) return;
+    try {
+      const previewRes = await fetch("/api/tier2-install-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!previewRes.ok) return;
+      const preview = await previewRes.json() as { confirm_token: string; diff: string; base_hash: string; is_creation: boolean };
+      const result = await confirmStagedPreview(settingsEntry.path, preview);
+      if (result.ok) fetchTier2Status().then(setTier2Status).catch(() => {});
+    } catch {
+      // Errors surface via Toast from confirmStagedPreview
+    }
+  }, [files, confirmStagedPreview]);
 
   // Normalize wizard state.
   const [normalizeEntry, setNormalizeEntry] = useState<NonCanonicalEntry | null>(null);
@@ -327,24 +361,45 @@ export function SimulatorView() {
 
   return (
     <div className={`sim-shell${inspectorOpen ? " has-inspector" : ""}`}>
-      {/* Tier 2 unavailable banner — one-time dismissible */}
-      {!tier2BannerDismissed && simulatorMode === "per-cwd" && (
-        <div className="sim-tier2-banner">
-          <span className="sim-tier2-banner-icon" aria-hidden="true">
-            <InfoIcon size={14} />
-          </span>
-          <span className="sim-tier2-banner-text">
-            Live verification (checking that Claude actually loads the file after a move) requires a newer Claude version. Fast checks are still running — content and path integrity are verified before every move.
-          </span>
-          <button
-            type="button"
-            className="sim-tier2-banner-dismiss"
-            onClick={dismissTier2Banner}
-            aria-label="Dismiss"
-          >
-            ×
-          </button>
-        </div>
+      {/* Tier 2 banner — shows install prompt when not installed, or event count when active */}
+      {simulatorMode === "per-cwd" && tier2Status !== null && (
+        tier2Status.available ? (
+          <div className="sim-tier2-banner sim-tier2-banner--active">
+            <span className="sim-tier2-banner-icon" aria-hidden="true">✓</span>
+            <span className="sim-tier2-banner-text">
+              Live verification active — {tier2Status.events_captured} load events captured.
+              Claude is recording which files it actually loads each session.
+            </span>
+          </div>
+        ) : !tier2BannerDismissed && (
+          <div className="sim-tier2-banner">
+            <span className="sim-tier2-banner-icon" aria-hidden="true">
+              <InfoIcon size={14} />
+            </span>
+            <span className="sim-tier2-banner-text">
+              {tier2Status.preflight.ok
+                ? "Live verification is off. Enable it to see which files Claude actually loads each session — compared against the simulator's prediction."
+                : `Live verification blocked: ${tier2Status.reason}`}
+            </span>
+            {tier2Status.preflight.ok && (
+              <button
+                type="button"
+                className="sim-tier2-banner-enable"
+                onClick={() => enableTier2()}
+              >
+                Enable
+              </button>
+            )}
+            <button
+              type="button"
+              className="sim-tier2-banner-dismiss"
+              onClick={dismissTier2Banner}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )
       )}
 
       {/* Header strip */}
