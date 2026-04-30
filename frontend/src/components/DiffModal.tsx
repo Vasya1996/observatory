@@ -340,15 +340,8 @@ function DiffRowView({ row }: { row: DiffRow }) {
 // supplied by upstream call sites — collapse defensively so the .diff-head
 // stays human-readable.
 function collapseHome(p: string): string {
-  // Best-effort using a runtime-detected home. We don't have process.env on
-  // the frontend; the backend's collapsed paths are the authoritative source,
-  // so we accept the absolute path verbatim when it doesn't start with /home.
-  // Vasya's home on the prestage VPS is /home/voxdecaelo — known constant.
-  // Production builds shouldn't hardcode this; we keep it dev-only.
-  if (META_ENV?.DEV) {
-    if (p.startsWith("/home/voxdecaelo/")) {
-      return "~/" + p.slice("/home/voxdecaelo/".length);
-    }
-  }
+  // Use regex to handle any /home/<user>/ prefix without hard-coding the username.
+  const m = /^\/home\/[^/]+\/(.+)$/.exec(p);
+  if (m) return "~/" + m[1];
   return p;
 }

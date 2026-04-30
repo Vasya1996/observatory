@@ -333,8 +333,7 @@ function escapeRegex(s: string): string {
 }
 
 function collapseHome(p: string): string {
-  if (p.startsWith("/home/voxdecaelo/")) {
-    return "~/" + p.slice("/home/voxdecaelo/".length);
-  }
+  const m = /^\/home\/[^/]+\/(.+)$/.exec(p);
+  if (m) return "~/" + m[1];
   return p;
 }

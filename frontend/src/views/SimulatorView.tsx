@@ -39,6 +39,19 @@ function humaniseReason(reason: string): string {
   return reason.replace(/_/g, " ");
 }
 
+function humaniseMatchedOn(matchedOn: string): string {
+  if (matchedOn === "user-global") return "Always loaded for you";
+  if (matchedOn === "no-paths") return "Always loaded (no path filter)";
+  if (matchedOn === "project-team") return "Team-shared project file";
+  if (matchedOn === "ancestor-walk") return "Found in a parent folder";
+  if (matchedOn === "add-dir") return "Loaded from an extra directory";
+  if (matchedOn === "managed") return "Organisation policy";
+  if (matchedOn === "automemory") return "Auto-memory notes";
+  // paths glob — show as "matches <glob>"
+  if (matchedOn.includes("*") || matchedOn.includes("/")) return `Matched path pattern: ${matchedOn}`;
+  return matchedOn.replace(/-/g, " ");
+}
+
 function collapseHome(p: string, home?: string): string {
   const h = home ?? "";
   if (h && p.startsWith(h + "/")) return "~/" + p.slice(h.length + 1);
@@ -360,7 +373,7 @@ export function SimulatorView() {
             loading…
           </span>
         )}
-        {/* Non-canonical badge — hidden when suppressed */}
+        {/* Non-canonical badge — shown when there are non-canonical files */}
         {simulatorMode === "per-cwd" && nonCanonCount > 0 && (
           <div className="sim-noncanon-badge-wrap" ref={panelRef} style={{ marginLeft: "auto" }}>
             <button
@@ -383,6 +396,18 @@ export function SimulatorView() {
               />
             )}
           </div>
+        )}
+        {/* Suppressed pill — shown when non-canonical suggestions are paused for this folder (item 36) */}
+        {simulatorMode === "per-cwd" && suppressed && nonCanonCount === 0 && (
+          <button
+            type="button"
+            className="sim-noncanon-badge sim-suppressed-pill"
+            onClick={() => handleSuppress(false)}
+            title="Suggestions are paused for this folder. Click to re-enable."
+            style={{ marginLeft: "auto" }}
+          >
+            Suggestions paused — click to re-enable
+          </button>
         )}
       </div>
 
@@ -706,7 +731,7 @@ function SlotCard({ entry, ambiguous, selected, onSelect, onDblClick, onContextM
       </div>
 
       {step?.matched_on && (
-        <div className="sim-card-reason">{step.matched_on}</div>
+        <div className="sim-card-reason">{humaniseMatchedOn(step.matched_on)}</div>
       )}
 
       <div className="sim-card-footer">

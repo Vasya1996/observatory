@@ -69,26 +69,26 @@ function validFilename(name: string): boolean {
 }
 
 // Compose the destination path for a given Location + filename.
-function composePath(loc: Location, filename: string): string {
+function composePath(loc: Location, filename: string, home: string): string {
   const fname = filename.endsWith(".md") ? filename : `${filename}.md`;
   if (loc.mode === "everywhere") {
-    return `/home/voxdecaelo/.claude/rules/${fname}`;
+    return `${home}/.claude/rules/${fname}`;
   }
   if (loc.mode === "project") {
     return `${loc.cwd}/.claude/rules/${fname}`;
   }
   // pattern
   if (loc.scope === "user") {
-    return `/home/voxdecaelo/.claude/rules/${fname}`;
+    return `${home}/.claude/rules/${fname}`;
   }
   return `${loc.cwd}/.claude/rules/${fname}`;
 }
 
 // ~-collapse the path so the preview "Saved at:" reads nicely.
-function collapseHome(p: string): string {
-  if (p.startsWith("/home/voxdecaelo/")) {
-    return "~/" + p.slice("/home/voxdecaelo/".length);
-  }
+function collapseHome(p: string, home?: string): string {
+  if (home && p.startsWith(home + "/")) return "~/" + p.slice(home.length + 1);
+  const m = /^\/home\/[^/]+\/(.+)$/.exec(p);
+  if (m) return "~/" + m[1];
   return p;
 }
 
@@ -127,6 +127,21 @@ export function RuleWizardModal({ originFile, cwds, onClose }: Props) {
   const files = useStore((s) => s.files);
   const { requestWrite } = useWritePipeline();
   const pushToast = useStore((s) => s.pushToast);
+
+  // Derive home from file index rather than hard-coding.
+  const home = useMemo(() => {
+    for (const f of files) {
+      if (f.display.startsWith("~/") && f.path.length > 2) {
+        const suffix = f.display.slice(1);
+        if (f.path.endsWith(suffix)) return f.path.slice(0, f.path.length - suffix.length);
+      }
+    }
+    for (const f of files) {
+      const m = /^(\/home\/[^/]+)\/.+/.exec(f.path);
+      if (m) return m[1];
+    }
+    return "/home";
+  }, [files]);
 
   const enclosingCwd = useMemo(
     () => deriveEnclosingCwd(originFile.path, cwds),
@@ -174,10 +189,10 @@ export function RuleWizardModal({ originFile, cwds, onClose }: Props) {
 
   // Compose live values: full destination path, full content, validation.
   const fullPath = useMemo(
-    () => composePath(location, filename || "untitled"),
-    [location, filename],
+    () => composePath(location, filename || "untitled", home),
+    [location, filename, home],
   );
-  const collapsedPath = useMemo(() => collapseHome(fullPath), [fullPath]);
+  const collapsedPath = useMemo(() => collapseHome(fullPath, home), [fullPath, home]);
   const content = useMemo(() => buildContent(location, body), [location, body]);
 
   const errors = useMemo<string[]>(() => {
@@ -337,7 +352,7 @@ export function RuleWizardModal({ originFile, cwds, onClose }: Props) {
                   <strong>Only in this project</strong>
                   <span className="wizard-radio-hint">
                     {enclosingCwd
-                      ? `Saved under ${collapseHome(enclosingCwd)}/.claude/rules/`
+                      ? `Saved under ${collapseHome(enclosingCwd, home)}/.claude/rules/`
                       : "Disabled — no enclosing cwd for this CLAUDE.md."}
                   </span>
                 </span>
@@ -368,7 +383,7 @@ export function RuleWizardModal({ originFile, cwds, onClose }: Props) {
                         checked={patternScope === "user"}
                         onChange={() => setPatternScope("user")}
                       />
-                      <span>user-global ({collapseHome("/home/voxdecaelo/.claude/rules/")})</span>
+                      <span>user-global ({collapseHome(`${home}/.claude/rules/`, home)})</span>
                     </label>
                     <label
                       className={`wizard-subradio${enclosingCwd ? "" : " disabled"}`}
@@ -382,7 +397,7 @@ export function RuleWizardModal({ originFile, cwds, onClose }: Props) {
                       />
                       <span>
                         per-repo
-                        {enclosingCwd && ` (${collapseHome(enclosingCwd)}/.claude/rules/)`}
+                        {enclosingCwd && ` (${collapseHome(enclosingCwd, home)}/.claude/rules/)`}
                       </span>
                     </label>
                   </div>

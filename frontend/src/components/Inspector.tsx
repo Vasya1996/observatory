@@ -920,7 +920,26 @@ function EmptyState({
 const MEMORY_TYPES = ["feedback", "project", "reference", "user"] as const;
 type MemoryType = (typeof MEMORY_TYPES)[number];
 
-const MEMORY_INDEX_PATH = "/home/voxdecaelo/.claude/knowledge/MEMORY.md";
+// MEMORY.md path derived at runtime from the file index — no hardcoded username.
+// Falls back to a reasonable default so the write still works when the index
+// hasn't loaded yet (the user won't reach MemoryWriter until the index is ready).
+function resolveMemoryIndexPath(files: FileEntry[]): string {
+  const found = files.find(
+    (f) => f.kind === "memory_index" && f.path.endsWith("/MEMORY.md"),
+  );
+  if (found) return found.path;
+  // Fallback: derive home from any file whose display starts with ~/
+  for (const f of files) {
+    if (f.display.startsWith("~/") && f.path.length > 2) {
+      const suffix = f.display.slice(1);
+      if (f.path.endsWith(suffix)) {
+        const home = f.path.slice(0, f.path.length - suffix.length);
+        return `${home}/.claude/knowledge/MEMORY.md`;
+      }
+    }
+  }
+  return "~/.claude/knowledge/MEMORY.md";
+}
 
 // Inline form rendered in the Inspector when a memory file is selected.
 // Persists changes through the Phase 2 write pipeline as a multi-file patch
@@ -944,6 +963,8 @@ function MemoryWriter({ file }: { file: FileEntry }) {
   const [error, setError] = useState<string | null>(null);
   const { requestWrite } = useWritePipeline();
   const pushToast = useStore((s) => s.pushToast);
+  const allFiles = useStore((s) => s.files);
+  const memoryIndexPath = resolveMemoryIndexPath(allFiles);
 
   // Reset form when the selected file changes — otherwise typing in one
   // file's form leaks into the next one.
@@ -988,7 +1009,7 @@ function MemoryWriter({ file }: { file: FileEntry }) {
       }
 
       // 2. Read MEMORY.md content + compute the index-line update.
-      const indexRes = await fetchFile(MEMORY_INDEX_PATH);
+      const indexRes = await fetchFile(memoryIndexPath);
       const basename = baseName(file.path);
       const newIndexLine = `- [${name}](${basename}) — ${description}`;
       const indexUpdate = updateMemoryIndex(
@@ -1006,7 +1027,7 @@ function MemoryWriter({ file }: { file: FileEntry }) {
           title: "update memory frontmatter",
         },
         {
-          path: MEMORY_INDEX_PATH,
+          path: memoryIndexPath,
           newContent: indexUpdate,
           title: "update MEMORY.md index",
         },

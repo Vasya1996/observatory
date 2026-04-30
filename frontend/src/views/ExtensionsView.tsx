@@ -42,8 +42,27 @@ import type {
   SkillCard,
 } from "../types";
 
-const SETTINGS_PATH = "/home/voxdecaelo/.claude/settings.json";
-const MCP_PATH = "/home/voxdecaelo/.claude/.mcp.json";
+// Runtime-resolved paths — derived from the file index so this works for any user.
+// These are computed once per render of ExtensionsView and passed down; the
+// fallback is the conventional path which is always correct in practice.
+function resolveSettingsPath(files: { path: string; kind: string }[]): string {
+  const f = files.find((x) => x.kind === "settings" && x.path.endsWith("/settings.json") && !x.path.includes(".local."));
+  if (f) return f.path;
+  for (const x of files) {
+    const m = /^(\/home\/[^/]+)\/.+/.exec(x.path);
+    if (m) return `${m[1]}/.claude/settings.json`;
+  }
+  return "~/.claude/settings.json";
+}
+function resolveMcpPath(files: { path: string; kind: string }[]): string {
+  const f = files.find((x) => x.kind === "mcp");
+  if (f) return f.path;
+  for (const x of files) {
+    const m = /^(\/home\/[^/]+)\/.+/.exec(x.path);
+    if (m) return `${m[1]}/.claude/.mcp.json`;
+  }
+  return "~/.claude/.mcp.json";
+}
 
 type SectionKey = "skills" | "plugins" | "mcp";
 
@@ -63,6 +82,9 @@ export function ExtensionsView() {
 
   const { requestWrite } = useWritePipeline();
   const pushToast = useStore((s) => s.pushToast);
+  const allFiles = useStore((s) => s.files);
+  const SETTINGS_PATH = useMemo(() => resolveSettingsPath(allFiles), [allFiles]);
+  const MCP_PATH = useMemo(() => resolveMcpPath(allFiles), [allFiles]);
 
   const load = useCallback(async () => {
     try {
