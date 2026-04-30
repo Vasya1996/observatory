@@ -33,8 +33,8 @@ _DISABLED_SENTINEL = ".DISABLED"
 _DISABLED_COMMENT_PREFIX = "<!-- [disabled by Observatory] --> "
 
 # Kinds where "autoload" is not a meaningful concept.
+# claude_md is NOT in this set — it is toggleable via claudeMdExcludes.
 _AUTOLOAD_NA_KINDS: frozenset[FileKind] = frozenset({
-    "claude_md",
     "automemory",
     "settings",
     "script",
@@ -165,6 +165,49 @@ def _autoload_state_memory(path: Path) -> str:
     return "on"
 
 
+def _autoload_state_claude_md(path: Path) -> str:
+    """Return "off" when path is listed in claudeMdExcludes of ANY known cwd's
+    project-layer settings (<cwd>/.claude/settings.json) or the user-layer
+    settings (~/.claude/settings.json or settings.local.json).
+
+    This is a heuristic for the global autoload_state field on the FileEntry.
+    The per-cwd precise state is derived from simulate.status == "loaded".
+    Uses pathspec gitwildmatch matching, same as simulator.py's exclude check.
+    """
+    import pathspec as _pathspec
+
+    path_str = str(path)
+    settings_candidates: list[Path] = [
+        config.CLAUDE_DIR / "settings.json",
+        config.CLAUDE_DIR / "settings.local.json",
+    ]
+    for cwd in scanner.discover_cwds():
+        settings_candidates.append(cwd / ".claude" / "settings.json")
+
+    for sf in settings_candidates:
+        if not sf.is_file():
+            continue
+        try:
+            data = json.loads(sf.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        raw = data.get("claudeMdExcludes", [])
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            continue
+        globs = [str(g) for g in raw if g]
+        for glob in globs:
+            try:
+                spec = _pathspec.PathSpec.from_lines("gitwildmatch", [glob])
+                if spec.match_file(path_str):
+                    return "off"
+            except Exception:
+                continue
+
+    return "on"
+
+
 def compute_autoload_state(path: Path, kind: FileKind) -> str:
     """Compute the autoload state for a single file entry during index build."""
     if kind in _AUTOLOAD_NA_KINDS:
@@ -175,6 +218,8 @@ def compute_autoload_state(path: Path, kind: FileKind) -> str:
         return _autoload_state_skill(path)
     if kind == "memory":
         return _autoload_state_memory(path)
+    if kind == "claude_md":
+        return _autoload_state_claude_md(path)
     return "n/a"
 
 # Phase 2: kinds the user can edit through Observatory. Other kinds are

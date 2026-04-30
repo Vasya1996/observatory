@@ -497,12 +497,17 @@ AutoloadMechanism = Literal[
     "mcp_disabled_key",     # mcp server: move entry between mcpServers / mcpServers_disabled
     "comment_out_import",   # knowledge: comment/uncomment @-import line in parent CLAUDE.md
     "memory_index_comment", # knowledge: comment/uncomment entry in MEMORY.md
+    "claude_md_excludes",   # claude_md: add/remove path from claudeMdExcludes in <cwd>/.claude/settings.json
 ]
 
 
 class AutoloadToggleRequest(BaseModel):
     path: str   # absolute path of the file whose autoload is being toggled
     enabled: bool  # True = enable autoload, False = disable
+    # Required when kind == "claude_md": which project cwd's settings.json to
+    # write the claudeMdExcludes entry into.  When absent for a claude_md kind,
+    # the backend returns 422 with a plain-language Russian message.
+    cwd: Optional[str] = None
 
 
 class AutoloadTogglePreviewResponse(BaseModel):

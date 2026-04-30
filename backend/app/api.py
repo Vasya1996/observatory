@@ -28,6 +28,7 @@ from .models import (
     DeleteUndoRequest,
     DeleteUndoResponse,
     ExtensionsResponse,
+    FileEntry,
     FileReadResponse,
     GlobChange,
     ImportRef,
@@ -81,40 +82,6 @@ MIGRATION_TOKENS: dict[str, list[str]] = {}
 
 # Allowed creation zones — we let the user create new files only in these
 # subtrees. Everywhere else, /api/preview rejects creation requests with 403.
-# Resolved at module import; lookups normalise the proposed path through
-# `expanduser().resolve()` first.
-_CREATION_ALLOWED_ROOTS = (
-    config.CLAUDE_DIR / "rules",
-    config.CLAUDE_DIR / "knowledge",
-)
-
-
-def _is_under_allowed_creation_zone(target: Path) -> bool:
-    """True if `target` lives under any allowed creation root, including
-    project-zone `<cwd>/.claude/rules/`. Both the static user-level roots
-    above and per-cwd rules dirs are allowed."""
-    try:
-        resolved = target.resolve()
-    except OSError:
-        return False
-    for root in _CREATION_ALLOWED_ROOTS:
-        try:
-            resolved.relative_to(root)
-            return True
-        except ValueError:
-            continue
-    # Per-cwd rules directories. Re-derive on every call so a cwd added
-    # mid-session also qualifies.
-    for cwd in scanner.discover_cwds():
-        per_repo_rules = (cwd / ".claude" / "rules").resolve()
-        try:
-            resolved.relative_to(per_repo_rules)
-            return True
-        except ValueError:
-            continue
-    return False
-
-
 def _purge_expired_pending() -> None:
     """Lazy expiry — drops every PENDING_WRITES entry older than TTL."""
     now = datetime.now(timezone.utc)
@@ -1160,14 +1127,6 @@ def post_migrate_finalize(body: MigrateFinalizeRequest) -> MigrateFinalizeRespon
     return MigrateFinalizeResponse(rolled_back=len(restored))
 
 
-def _is_under_writable_creation_zone(target: Path) -> bool:
-    """Same creation-zone check as _is_under_allowed_creation_zone, used for
-    delete permission — only files under the same roots where Observatory is
-    allowed to create/modify files can be deleted through the UI.
-    """
-    return _is_under_allowed_creation_zone(target)
-
-
 @router.post("/delete", response_model=DeletePreviewResponse)
 def post_delete(req: Request, body: DeletePreviewRequest) -> DeletePreviewResponse:
     """Preview a file deletion: take a snapshot and return a confirm_token.
@@ -1678,6 +1637,75 @@ def _autoload_toggle_knowledge_import(
     return "".join(lines), "comment_out_import"
 
 
+import pathspec as _pathspec
+
+
+def _autoload_toggle_claude_md_excludes(
+    cwd: Path, target: Path, enabled: bool
+) -> tuple[str, str, AutoloadMechanism]:
+    """Patch <cwd>/.claude/settings.json claudeMdExcludes for a claude_md toggle.
+
+    Returns (current_content_for_diff, new_content, mechanism).
+    The settings file is created as '{}\\n' if it doesn't exist yet.
+    Glob removal on re-enable also strips any glob that matches target via
+    pathspec gitwildmatch (e.g. user manually added '**/observatory/CLAUDE.md').
+    """
+    settings_path = cwd / ".claude" / "settings.json"
+    try:
+        current = settings_path.read_text(encoding="utf-8") if settings_path.is_file() else "{}\n"
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"settings.json read error: {exc}")
+    try:
+        data: dict = json.loads(current)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"settings.json parse error: {exc}")
+
+    target_str = str(target)
+    excludes: list = data.get("claudeMdExcludes", [])
+    if not isinstance(excludes, list):
+        excludes = [excludes] if excludes else []
+
+    if enabled:
+        # Re-enable: remove exact path AND any glob that matches the target.
+        new_excludes = []
+        for entry in excludes:
+            entry_str = str(entry)
+            if entry_str == target_str:
+                continue
+            try:
+                spec = _pathspec.PathSpec.from_lines("gitwildmatch", [entry_str])
+                if spec.match_file(target_str):
+                    continue
+            except Exception:
+                pass
+            new_excludes.append(entry_str)
+        if new_excludes:
+            data["claudeMdExcludes"] = new_excludes
+        else:
+            data.pop("claudeMdExcludes", None)
+    else:
+        # Disable: add the absolute path if not already present (literal or via glob).
+        already_excluded = False
+        for entry in excludes:
+            entry_str = str(entry)
+            if entry_str == target_str:
+                already_excluded = True
+                break
+            try:
+                spec = _pathspec.PathSpec.from_lines("gitwildmatch", [entry_str])
+                if spec.match_file(target_str):
+                    already_excluded = True
+                    break
+            except Exception:
+                pass
+        if not already_excluded:
+            excludes.append(target_str)
+        data["claudeMdExcludes"] = excludes
+
+    new_content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    return current, new_content, "claude_md_excludes"
+
+
 @router.post("/autoload-toggle-preview", response_model=AutoloadTogglePreviewResponse)
 def post_autoload_toggle_preview(
     req: Request, body: AutoloadToggleRequest
@@ -1705,7 +1733,6 @@ def post_autoload_toggle_preview(
 
     # Kinds for which autoload toggling has no defined mechanism.
     NOT_APPLICABLE = {
-        "claude_md": "CLAUDE.md loads whenever its directory is on the ancestor walk — there is no opt-out field",
         "settings": "settings.json loads based on cwd — there is no per-file toggle",
         "mcp": "The .mcp.json file itself is always loaded; individual servers are toggled via Extensions",
         "automemory": "Auto-memory is managed by Claude Code — it cannot be toggled here",
@@ -1785,6 +1812,40 @@ def post_autoload_toggle_preview(
             new_content = new_content_opt
             write_target = memory_index
 
+    # --- claude_md ---
+    elif kind == "claude_md":
+        # Managed CLAUDE.md cannot be excluded per the official docs.
+        managed = config.os_managed_claude_md_path()
+        if target == managed:
+            raise HTTPException(
+                status_code=422,
+                detail="Этот файл управляется системой и не может быть исключён через `claudeMdExcludes` (так указано в документации Claude Code).",
+            )
+        # cwd is required to know which project settings.json to write.
+        if not body.cwd:
+            raise HTTPException(
+                status_code=422,
+                detail="Выберите рабочую папку — отключение CLAUDE.md действует только для конкретной папки.",
+            )
+        cwd_path = Path(body.cwd).expanduser().resolve()
+        current_for_diff, new_content, mechanism = _autoload_toggle_claude_md_excludes(
+            cwd_path, target, body.enabled
+        )
+        write_target = cwd_path / ".claude" / "settings.json"
+        # For the "re-enable" no-op case (file not in excludes and settings
+        # doesn't exist): return applicable with an empty diff so the FE's
+        # optimistic flip still works cleanly.
+        if current_for_diff == new_content:
+            return AutoloadTogglePreviewResponse(
+                toggle_applicable=True,
+                confirm_token=None,
+                diff="",
+                base_hash=writer.compute_content_hash(current_for_diff),
+                is_creation=False,
+                new_enabled=body.enabled,
+                mechanism=mechanism,
+            )
+
     else:
         return AutoloadTogglePreviewResponse(
             toggle_applicable=False,
@@ -1796,6 +1857,7 @@ def post_autoload_toggle_preview(
     if write_entry is not None and not write_entry.writable:
         raise HTTPException(status_code=403, detail=f"target file '{write_target}' is not writable")
 
+    is_creation = not write_target.exists()
     base_hash = writer.compute_content_hash(current_for_diff)
     diff_lines = difflib.unified_diff(
         current_for_diff.splitlines(keepends=True),
@@ -1811,7 +1873,7 @@ def post_autoload_toggle_preview(
         path=str(write_target),
         new_content=new_content,
         base_hash=base_hash,
-        is_creation=False,
+        is_creation=is_creation,
         created_at=datetime.now(timezone.utc),
     )
     return AutoloadTogglePreviewResponse(
@@ -1819,7 +1881,7 @@ def post_autoload_toggle_preview(
         confirm_token=confirm_token,
         diff=diff,
         base_hash=base_hash,
-        is_creation=False,
+        is_creation=is_creation,
         new_enabled=body.enabled,
         mechanism=mechanism,
     )
