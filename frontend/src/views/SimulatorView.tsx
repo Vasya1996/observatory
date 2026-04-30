@@ -25,6 +25,7 @@ import type {
   FileEntry,
   LoadStatus,
   NonCanonicalEntry,
+  OrphanConfigEntry,
   SimulatorStats,
   SimulatorResponse,
   TimelineStep,
@@ -33,6 +34,23 @@ import type {
 const TOKENS_PER_LINE = 12;
 
 const TIER2_BANNER_KEY = "observatory_tier2_banner_dismissed";
+const ORPHAN_SECTION_KEY = "observatory_orphan_section_collapsed";
+
+function humaniseOrphanReason(reason: string): string {
+  if (reason === "buried_in_config_folder") return "Buried in config folder";
+  if (reason === "outside_load_chain") return "Outside load chain";
+  return reason.replace(/_/g, " ");
+}
+
+function humaniseOrphanReasonLong(reason: string): string {
+  if (reason === "buried_in_config_folder") {
+    return "It lives inside a subfolder Claude only reads when it opens files there — not at session start or from another project.";
+  }
+  if (reason === "outside_load_chain") {
+    return "It's outside any folder Claude scans for rules or CLAUDE.md files.";
+  }
+  return reason.replace(/_/g, " ");
+}
 
 function humaniseReason(reason: string): string {
   if (reason === "loaded_via_at_import") return "Loaded by reference (@-import)";
@@ -92,6 +110,20 @@ export function SimulatorView() {
   const [nonCanonMap, setNonCanonMap] = useState<Map<string, NonCanonicalEntry>>(new Map());
   // Whether the current cwd has the suppress flag on.
   const [suppressed, setSuppressed] = useState(false);
+
+  // Orphan configs — files that exist on disk but Claude never loads anywhere.
+  // Backend returns these with any cwd query; value is cwd-independent.
+  const [orphanConfigs, setOrphanConfigs] = useState<OrphanConfigEntry[]>([]);
+  const [orphanSectionCollapsed, setOrphanSectionCollapsed] = useState(
+    () => localStorage.getItem(ORPHAN_SECTION_KEY) === "1",
+  );
+  const toggleOrphanSection = () => {
+    setOrphanSectionCollapsed((v) => {
+      const next = !v;
+      localStorage.setItem(ORPHAN_SECTION_KEY, next ? "1" : "0");
+      return next;
+    });
+  };
 
   const [panelOpen, setPanelOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -182,6 +214,7 @@ export function SimulatorView() {
       setStatusMap(null);
       setNonCanonMap(new Map());
       setSuppressed(false);
+      setOrphanConfigs([]);
       return;
     }
     let cancelled = false;
@@ -208,6 +241,7 @@ export function SimulatorView() {
         }
         setNonCanonMap(ncMap);
         setSuppressed(ncRes.suppressed ?? false);
+        setOrphanConfigs(ncRes.orphan_configs ?? []);
       })
       .catch((e) => console.warn("[observatory] sim/non-canonical failed", e))
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -288,6 +322,8 @@ export function SimulatorView() {
 
   // Effective non-canonical count: 0 when suppressed.
   const nonCanonCount = suppressed ? 0 : nonCanonMap.size;
+  // Badge total: non-canonical + orphan configs.
+  const badgeTotal = nonCanonCount + orphanConfigs.length;
 
   const setEditorOpen = useStore((s) => s.setEditorOpen);
   const [ctxTarget, setCtxTarget] = useState<ContextMenuTarget | null>(null);
@@ -322,6 +358,20 @@ export function SimulatorView() {
   const handleNormalize = useCallback((entry: NonCanonicalEntry, mode?: NormalizeMode) => {
     setNormalizeEntry(entry);
     setNormalizePrefilledMode(mode ?? null);
+  }, []);
+
+  // Opens the normalize wizard for an orphan config — synthesises a NonCanonicalEntry
+  // so the existing wizard can handle it without a new code path.
+  const handleOrphanMove = useCallback((orphan: OrphanConfigEntry) => {
+    const syntheticEntry: NonCanonicalEntry = {
+      file_path: orphan.file_path,
+      slot: "ondemand",
+      canonical_path: orphan.suggested_canonical_paths[0] ?? orphan.file_path,
+      reason: "outside_canonical_dir",
+    };
+    setNormalizeEntry(syntheticEntry);
+    setNormalizePrefilledMode("rule");
+    setPanelOpen(false);
   }, []);
 
   const handleSuppress = useCallback(async (value: boolean) => {
@@ -449,25 +499,27 @@ export function SimulatorView() {
             loading…
           </span>
         )}
-        {/* Non-canonical badge — shown when there are non-canonical files */}
-        {simulatorMode === "per-cwd" && nonCanonCount > 0 && (
+        {/* Non-canonical + orphan badge */}
+        {simulatorMode === "per-cwd" && badgeTotal > 0 && (
           <div className="sim-noncanon-badge-wrap" ref={panelRef} style={{ marginLeft: "auto" }}>
             <button
               type="button"
               className={`sim-noncanon-badge sim-noncanon-badge-btn${panelOpen ? " open" : ""}`}
               onClick={() => setPanelOpen((v) => !v)}
-              title="These files are in unusual locations — Claude may not load them as expected"
+              title="Some files are in unusual locations or are never loaded by Claude"
             >
               <AlertTriangleIcon size={11} />
-              {nonCanonCount}&thinsp;file{nonCanonCount !== 1 ? "s" : ""} in unusual locations
+              {badgeTotal}&thinsp;file{badgeTotal !== 1 ? "s" : ""} in unusual locations
             </button>
             {panelOpen && (
               <NonCanonPanel
                 entries={Array.from(nonCanonMap.values())}
+                orphanConfigs={orphanConfigs}
                 files={files}
                 suppressed={suppressed}
                 onOpen={handleOpenFile}
                 onNormalize={handleNormalize}
+                onOrphanMove={handleOrphanMove}
                 onSuppress={handleSuppress}
               />
             )}
@@ -492,6 +544,16 @@ export function SimulatorView() {
         <div className="sim-verified-wrap">
           <MigrationVerifiedCard key={cardKey} activeCwd={lastCwd} />
         </div>
+      )}
+
+      {/* Orphan configs section — files Claude never loads in any cwd */}
+      {simulatorMode === "per-cwd" && orphanConfigs.length > 0 && (
+        <OrphanConfigsSection
+          orphanConfigs={orphanConfigs}
+          collapsed={orphanSectionCollapsed}
+          onToggle={toggleOrphanSection}
+          onMove={handleOrphanMove}
+        />
       )}
 
       {/* Body */}
@@ -572,14 +634,16 @@ export function SimulatorView() {
 
 interface NonCanonPanelProps {
   entries: NonCanonicalEntry[];
+  orphanConfigs: OrphanConfigEntry[];
   files: FileEntry[];
   suppressed: boolean;
   onOpen: (filePath: string) => void;
   onNormalize: (entry: NonCanonicalEntry) => void;
+  onOrphanMove: (orphan: OrphanConfigEntry) => void;
   onSuppress: (value: boolean) => void;
 }
 
-function NonCanonPanel({ entries, files, suppressed, onOpen, onNormalize, onSuppress }: NonCanonPanelProps) {
+function NonCanonPanel({ entries, orphanConfigs, files, suppressed, onOpen, onNormalize, onOrphanMove, onSuppress }: NonCanonPanelProps) {
   return (
     <div className="sim-noncanon-panel" role="dialog" aria-label="Files in unusual locations">
       {/* Suppressed banner */}
@@ -596,50 +660,178 @@ function NonCanonPanel({ entries, files, suppressed, onOpen, onNormalize, onSupp
         </div>
       )}
 
-      <div className="sim-noncanon-panel-head">
-        <span>files in unusual locations</span>
-        <span style={{ color: "var(--amber)" }}>{entries.length}</span>
-      </div>
-      <ul className="sim-noncanon-panel-list">
-        {entries.map((e) => {
-          const fileInIndex = files.some((f) => f.path === e.file_path);
-          return (
-            <li key={e.file_path} className="sim-noncanon-panel-row">
-              <div className="sim-noncanon-panel-name">{collapseHome(e.file_path)}</div>
-              <div className="sim-noncanon-panel-meta">
-                <span className="sim-noncanon-slot">{e.slot}</span>
-                <span className="sim-noncanon-reason">{humaniseReason(e.reason)}</span>
-              </div>
-              <div className="sim-noncanon-panel-actions">
-                {fileInIndex && (
+      {entries.length > 0 && (
+        <>
+          <div className="sim-noncanon-panel-head">
+            <span>files in unusual locations</span>
+            <span style={{ color: "var(--amber)" }}>{entries.length}</span>
+          </div>
+          <ul className="sim-noncanon-panel-list">
+            {entries.map((e) => {
+              const fileInIndex = files.some((f) => f.path === e.file_path);
+              return (
+                <li key={e.file_path} className="sim-noncanon-panel-row">
+                  <div className="sim-noncanon-panel-name">{collapseHome(e.file_path)}</div>
+                  <div className="sim-noncanon-panel-meta">
+                    <span className="sim-noncanon-slot">{e.slot}</span>
+                    <span className="sim-noncanon-reason">{humaniseReason(e.reason)}</span>
+                  </div>
+                  <div className="sim-noncanon-panel-actions">
+                    {fileInIndex && (
+                      <button
+                        type="button"
+                        className="sim-noncanon-open-btn"
+                        onClick={() => onOpen(e.file_path)}
+                      >
+                        Open
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="sim-noncanon-open-btn"
+                      onClick={() => onNormalize(e)}
+                    >
+                      Move…
+                    </button>
+                    <button
+                      type="button"
+                      className="sim-noncanon-suppress-btn"
+                      onClick={() => onSuppress(true)}
+                      title="Stop showing this badge for the current folder"
+                    >
+                      Stop suggesting
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+
+      {orphanConfigs.length > 0 && (
+        <>
+          <div className="sim-noncanon-panel-head sim-noncanon-panel-head--orphan">
+            <span>files Claude never loads (any folder)</span>
+            <span style={{ color: "var(--paper-faint)" }}>{orphanConfigs.length}</span>
+          </div>
+          <ul className="sim-noncanon-panel-list">
+            {orphanConfigs.map((o) => (
+              <li key={o.file_path} className="sim-noncanon-panel-row">
+                <div className="sim-noncanon-panel-name">{collapseHome(o.file_path)}</div>
+                <div className="sim-noncanon-panel-meta">
+                  <span className="sim-noncanon-slot sim-noncanon-slot--orphan">{humaniseOrphanReason(o.reason)}</span>
+                </div>
+                <div className="sim-noncanon-panel-actions">
                   <button
                     type="button"
                     className="sim-noncanon-open-btn"
-                    onClick={() => onOpen(e.file_path)}
+                    onClick={() => onOrphanMove(o)}
                   >
-                    Open
+                    Move file…
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="sim-noncanon-open-btn"
-                  onClick={() => onNormalize(e)}
-                >
-                  Move…
-                </button>
-                <button
-                  type="button"
-                  className="sim-noncanon-suppress-btn"
-                  onClick={() => onSuppress(true)}
-                  title="Stop showing this badge for the current folder"
-                >
-                  Stop suggesting
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- OrphanConfigsSection ---------------------------------------------------
+
+interface OrphanConfigsSectionProps {
+  orphanConfigs: OrphanConfigEntry[];
+  collapsed: boolean;
+  onToggle: () => void;
+  onMove: (orphan: OrphanConfigEntry) => void;
+}
+
+function OrphanConfigsSection({ orphanConfigs, collapsed, onToggle, onMove }: OrphanConfigsSectionProps) {
+  return (
+    <div className="sim-orphan-section">
+      <button
+        type="button"
+        className="sim-orphan-section-header"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+      >
+        <span className="sim-orphan-section-title">
+          Files Claude doesn&apos;t load anywhere
+          <span className="sim-orphan-section-count">{orphanConfigs.length}</span>
+        </span>
+        <span className="sim-orphan-section-chevron" aria-hidden="true"
+          style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
+          <ChevronDownIcon size={14} />
+        </span>
+      </button>
+      {!collapsed && (
+        <>
+          <p className="sim-orphan-section-desc">
+            These rules and CLAUDE.md files exist in your folders but never get loaded by Claude.
+            Move them to a canonical location to make Claude actually read them.
+          </p>
+          <div className="sim-orphan-cards">
+            {orphanConfigs.map((o) => (
+              <OrphanCard key={o.file_path} orphan={o} onMove={onMove} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- OrphanCard -------------------------------------------------------------
+
+interface OrphanCardProps {
+  orphan: OrphanConfigEntry;
+  onMove: (orphan: OrphanConfigEntry) => void;
+}
+
+function OrphanCard({ orphan, onMove }: OrphanCardProps) {
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const basename = orphan.file_path.split("/").pop() ?? orphan.file_path;
+  const reason = orphan.reason;
+
+  return (
+    <div
+      className="sim-orphan-card"
+      onMouseEnter={() => setTooltipVisible(true)}
+      onMouseLeave={() => setTooltipVisible(false)}
+    >
+      <div className="sim-orphan-card-name">{basename}</div>
+      <div className="sim-orphan-card-path">{collapseHome(orphan.file_path)}</div>
+      <div className="sim-orphan-card-chips">
+        <span className={`sim-orphan-reason-chip sim-orphan-reason-chip--${reason}`}>
+          {humaniseOrphanReason(reason)}
+        </span>
+      </div>
+      {tooltipVisible && (
+        <div className="sim-orphan-tooltip" role="tooltip">
+          <div className="sim-orphan-tooltip-row">
+            <b>What&apos;s wrong:</b> Claude never reads this file in any of your folders.
+          </div>
+          <div className="sim-orphan-tooltip-row">
+            <b>Why it happened:</b> {humaniseOrphanReasonLong(reason)}
+          </div>
+          {orphan.suggested_canonical_paths.length > 0 && (
+            <div className="sim-orphan-tooltip-row">
+              <b>Suggested fix{orphan.suggested_canonical_paths.length > 1 ? "es" : ""}:</b>{" "}
+              {orphan.suggested_canonical_paths.map((p) => collapseHome(p)).join(" or ")}
+            </div>
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        className="sim-orphan-move-btn"
+        onClick={() => onMove(orphan)}
+      >
+        Move file…
+      </button>
     </div>
   );
 }
@@ -1083,6 +1275,15 @@ function resolveAbsolute(p: string, home: string): string {
 }
 
 // --- Icons ------------------------------------------------------------------
+
+function ChevronDownIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
 
 function AlertTriangleIcon({ size }: { size: number }) {
   return (

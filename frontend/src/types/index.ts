@@ -140,6 +140,18 @@ export interface NonCanonicalResponse {
 export interface NonCanonicalWithSuppressResponse {
   non_canonical: NonCanonicalEntry[];
   suppressed: boolean;
+  orphan_configs?: OrphanConfigEntry[];
+}
+
+// Files that exist on disk but are never loaded by Claude in any cwd.
+// Backend emits these as part of /api/non-canonical (same for every cwd query).
+export type OrphanConfigReason = "buried_in_config_folder" | "outside_load_chain";
+
+export interface OrphanConfigEntry {
+  file_path: string;
+  kind: string;
+  suggested_canonical_paths: string[];
+  reason: OrphanConfigReason;
 }
 
 // --- Extensions view (mirrors backend ExtensionsResponse shape) -----------
