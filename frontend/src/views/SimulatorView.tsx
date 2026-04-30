@@ -64,9 +64,11 @@ function collapseHome(p: string, home?: string): string {
   return p;
 }
 
-// Determine which DnD migration mode to use given the target slot.
-function dndMode(dstSlot: SlotKey): NormalizeMode | null {
+// Determine which DnD migration mode to use given source → destination slots.
+function dndModeForSlots(srcSlot: SlotKey, dstSlot: SlotKey): NormalizeMode | null {
   if (dstSlot === "ondemand") return null; // requires glob prompt — handled separately
+  if (srcSlot === "ondemand" && (dstSlot === "user" || dstSlot === "project" || dstSlot === "ancestor")) return "remove-paths";
+  if ((srcSlot === "user" || srcSlot === "ancestor") && dstSlot === "project") return "move-to-project";
   return "rule";
 }
 
@@ -80,7 +82,7 @@ export function SimulatorView() {
   const select = useStore((s) => s.select);
   const simulatorMode = useStore((s) => s.simulatorMode);
   const setSimulatorMode = useStore((s) => s.setSimulatorMode);
-  const { requestWrite, confirmStagedPreview } = useWritePipeline();
+  const { confirmStagedPreview } = useWritePipeline();
 
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [stats, setStats] = useState<SimulatorStats | null>(null);
@@ -142,10 +144,13 @@ export function SimulatorView() {
   // Normalize wizard state.
   const [normalizeEntry, setNormalizeEntry] = useState<NonCanonicalEntry | null>(null);
   const [normalizePrefilledMode, setNormalizePrefilledMode] = useState<NormalizeMode | null>(null);
+  const [normalizeForcedMode, setNormalizeForcedMode] = useState<NormalizeMode | null>(null);
+  const [normalizePathsGlobs, setNormalizePathsGlobs] = useState<string[] | null>(null);
+  const [normalizeTargetCwd, setNormalizeTargetCwd] = useState<string | null>(null);
   // Bump to force MigrationVerifiedCard to re-read localStorage after a commit.
   const [cardKey, setCardKey] = useState(0);
 
-  // Glob prompt for DnD into On-demand (not wired in this commit — shown as future).
+  // Glob prompt for DnD into On-demand.
   const [globPromptEntry, setGlobPromptEntry] = useState<NonCanonicalEntry | null>(null);
 
   useEffect(() => {
@@ -335,13 +340,14 @@ export function SimulatorView() {
     setCardKey((k) => k + 1);
     setNormalizeEntry(null);
     setNormalizePrefilledMode(null);
+    setNormalizeForcedMode(null);
+    setNormalizePathsGlobs(null);
+    setNormalizeTargetCwd(null);
   }, []);
 
   // DnD handlers at slot-column level.
   const handleDndDrop = useCallback((srcEntry: SlottedFile, dstSlot: SlotKey) => {
     const ncEntry = nonCanonMap.get(srcEntry.file.path);
-    // For a drop, synthesize a NonCanonicalEntry if the file isn't already non-canonical
-    // — the wizard just needs the file_path, slot, canonical_path, reason.
     const entry: NonCanonicalEntry = ncEntry ?? {
       file_path: srcEntry.file.path,
       slot: srcEntry.slot,
@@ -350,14 +356,29 @@ export function SimulatorView() {
     };
 
     if (dstSlot === "ondemand") {
-      // Glob prompt required — show a dedicated modal (GlobPromptModal).
       setGlobPromptEntry(entry);
       return;
     }
 
-    const mode = dndMode(dstSlot);
+    const mode = dndModeForSlots(srcEntry.slot, dstSlot);
+    if (mode === "move-to-project") {
+      setNormalizeEntry(entry);
+      setNormalizePrefilledMode(null);
+      setNormalizeForcedMode("move-to-project");
+      setNormalizePathsGlobs(null);
+      setNormalizeTargetCwd(lastCwd ?? null);
+      return;
+    }
+    if (mode === "remove-paths") {
+      setNormalizeEntry(entry);
+      setNormalizePrefilledMode(null);
+      setNormalizeForcedMode("remove-paths");
+      setNormalizePathsGlobs(null);
+      setNormalizeTargetCwd(null);
+      return;
+    }
     handleNormalize(entry, mode ?? "rule");
-  }, [nonCanonMap, handleNormalize]);
+  }, [nonCanonMap, handleNormalize, lastCwd]);
 
   return (
     <div className={`sim-shell${inspectorOpen ? " has-inspector" : ""}`}>
@@ -512,20 +533,34 @@ export function SimulatorView() {
         <NormalizeWizardModal
           entry={normalizeEntry}
           prefilledMode={normalizePrefilledMode}
-          onClose={() => { setNormalizeEntry(null); setNormalizePrefilledMode(null); }}
+          forcedMode={normalizeForcedMode ?? undefined}
+          pathsGlobs={normalizePathsGlobs ?? undefined}
+          targetCwd={normalizeTargetCwd ?? undefined}
+          onClose={() => {
+            setNormalizeEntry(null);
+            setNormalizePrefilledMode(null);
+            setNormalizeForcedMode(null);
+            setNormalizePathsGlobs(null);
+            setNormalizeTargetCwd(null);
+          }}
           onCommitted={handleMigrationCommitted}
           activeCwd={lastCwd ?? undefined}
         />
       )}
 
-      {/* Glob prompt for DnD into On-demand — simple modal */}
+      {/* Glob prompt for DnD into On-demand — collects path patterns then opens wizard */}
       {globPromptEntry && (
         <GlobPromptModal
           entry={globPromptEntry}
           onClose={() => setGlobPromptEntry(null)}
-          onConfirm={(_globs) => {
+          onConfirm={(globs) => {
+            const entry = globPromptEntry;
             setGlobPromptEntry(null);
-            handleNormalize(globPromptEntry, "rule");
+            setNormalizeEntry(entry);
+            setNormalizePrefilledMode(null);
+            setNormalizeForcedMode("add-paths");
+            setNormalizePathsGlobs(globs);
+            setNormalizeTargetCwd(null);
           }}
         />
       )}

@@ -24,8 +24,6 @@ import { useStore } from "../state/store";
 import { getCurrentPreviews } from "../hooks/useWritePipeline";
 import type { PreviewedPatch } from "../hooks/useWritePipeline";
 
-const META_ENV = (import.meta as { env?: { DEV?: boolean } }).env;
-
 // Render the unified diff into structured rows. We re-parse the unified diff
 // (rather than ask the backend for a richer payload) because the backend
 // already returns a stable diff string per /api/preview, and the parser is

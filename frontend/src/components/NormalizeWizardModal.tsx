@@ -40,12 +40,21 @@ function basename(p: string): string {
   return p.split("/").pop() ?? p;
 }
 
-export type NormalizeMode = "rule" | "merge";
+export type NormalizeMode = "rule" | "merge" | "add-paths" | "remove-paths" | "move-to-project";
 
 export interface NormalizeWizardProps {
   entry: NonCanonicalEntry;
   /** When set, skips step 1 and uses this mode. */
   prefilledMode?: NormalizeMode | null;
+  /**
+   * When forcedMode is set, overrides prefilledMode and skips step 1.
+   * Used for DnD drops that already know the exact operation.
+   */
+  forcedMode?: NormalizeMode;
+  /** Pre-filled glob patterns for forcedMode === 'add-paths'. */
+  pathsGlobs?: string[];
+  /** Target cwd for forcedMode === 'move-to-project'. */
+  targetCwd?: string;
   onClose: () => void;
   /** Called after successful commit with snapshot data for the verified card. */
   onCommitted?: (data: MigrationCommitData) => void;
@@ -87,13 +96,14 @@ function ciText(ci: string): string {
   return "Content: could not verify — please review the diff carefully";
 }
 
-export function NormalizeWizardModal({ entry, prefilledMode, onClose, onCommitted, activeCwd }: NormalizeWizardProps) {
+export function NormalizeWizardModal({ entry, prefilledMode, forcedMode, pathsGlobs, targetCwd, onClose, onCommitted, activeCwd }: NormalizeWizardProps) {
   const pushToast = useStore((s) => s.pushToast);
 
-  const [step, setStep] = useState<1 | 2>(prefilledMode ? 2 : 1);
-  const [mode, setMode] = useState<NormalizeMode>(prefilledMode ?? "rule");
+  const effectiveMode = forcedMode ?? prefilledMode;
+  const [step, setStep] = useState<1 | 2>(effectiveMode ? 2 : 1);
+  const [mode, setMode] = useState<NormalizeMode>(effectiveMode ?? "rule");
   const [newFilename, setNewFilename] = useState(() => basename(entry.file_path));
-  const [deleteOriginal, setDeleteOriginal] = useState(prefilledMode !== "merge");
+  const [deleteOriginal, setDeleteOriginal] = useState(effectiveMode !== "merge");
 
   const [loading, setLoading] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
@@ -118,6 +128,8 @@ export function NormalizeWizardModal({ entry, prefilledMode, onClose, onCommitte
         mode,
         new_filename: mode === "rule" ? newFilename : undefined,
         delete_original: deleteOriginal,
+        paths_globs: (mode === "add-paths" && pathsGlobs?.length) ? pathsGlobs : undefined,
+        target_cwd: mode === "move-to-project" ? (targetCwd ?? activeCwd) : undefined,
       });
       setPreview(res);
     } catch (e) {
@@ -126,7 +138,7 @@ export function NormalizeWizardModal({ entry, prefilledMode, onClose, onCommitte
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entry.file_path, mode, newFilename, deleteOriginal]);
+  }, [entry.file_path, mode, newFilename, deleteOriginal, pathsGlobs, targetCwd, activeCwd]);
 
   useEffect(() => {
     if (step === 2) void fetchPreview();
@@ -183,6 +195,13 @@ export function NormalizeWizardModal({ entry, prefilledMode, onClose, onCommitte
   const ruleTarget = `~/.claude/rules/${newFilename || srcBase}`;
   const mergeTarget = `~/.claude/CLAUDE.md`;
 
+  function step2Heading(): string {
+    if (mode === "add-paths") return `Adding path patterns to ${srcBase}`;
+    if (mode === "remove-paths") return `Removing path patterns from ${srcBase}`;
+    if (mode === "move-to-project") return `Moving ${srcBase} to project`;
+    return "Review changes";
+  }
+
   return (
     <div
       ref={veilRef}
@@ -193,7 +212,7 @@ export function NormalizeWizardModal({ entry, prefilledMode, onClose, onCommitte
       <div className="modal normalize-modal" role="dialog" aria-modal="true" aria-label="Move file">
         <header className="modal-head">
           <h3>
-            {step === 1 ? "Move file" : "Review changes"}
+            {step === 1 ? "Move file" : step2Heading()}
           </h3>
           <span
             className="x"
@@ -385,7 +404,13 @@ function Step2({ mode, loading, previewErr, preview, deleteOriginal, setDeleteOr
             disabled={!preview || loading || applying}
             onClick={onApply}
           >
-            {applying ? "Applying…" : mode === "rule" ? "Apply — create rule" : "Apply — merge"}
+            {applying ? "Applying…"
+              : mode === "rule" ? "Apply — create rule"
+              : mode === "merge" ? "Apply — merge"
+              : mode === "add-paths" ? "Apply — add paths"
+              : mode === "remove-paths" ? "Apply — remove paths"
+              : mode === "move-to-project" ? "Apply — move to project"
+              : "Apply"}
           </button>
         </div>
       </footer>

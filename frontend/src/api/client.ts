@@ -214,10 +214,12 @@ export interface MigrateFinalizeResponse {
 
 export async function postMigratePreview(body: {
   source_path: string;
-  mode: "rule" | "merge";
+  mode: "rule" | "merge" | "add-paths" | "remove-paths" | "move-to-project";
   target_dir_or_file?: string;
   new_filename?: string;
   delete_original?: boolean;
+  paths_globs?: string[];
+  target_cwd?: string;
 }): Promise<MigratePreviewResponse> {
   const r = await fetch("/api/migrate-preview", {
     method: "POST",
