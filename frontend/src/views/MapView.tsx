@@ -239,7 +239,6 @@ export function MapView() {
       <ExplorerPane
         files={visibleFiles}
         orphanConfigs={orphanConfigs}
-        cy={cy}
         onRowHover={handleRowHover}
         ref={(el: HTMLElement | null) => { explorerRef.current = el; }}
       />

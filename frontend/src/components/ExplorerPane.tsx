@@ -35,7 +35,6 @@ import {
   useRef,
   useState,
 } from "react";
-import type cytoscape from "cytoscape";
 import { useStore } from "../state/store";
 import { ICON_PATH_BY_KIND } from "./nodeIcons";
 import type { FileEntry, OrphanConfigEntry } from "../types";
@@ -74,15 +73,13 @@ function saveExpanded(s: Set<string>) {
 interface Props {
   files: FileEntry[];
   orphanConfigs: OrphanConfigEntry[];
-  cy: cytoscape.Core | null;
-  /** Row hover → tell parent to highlight the graph node. */
+  /** Row hover → tell parent to highlight the graph node + dim others. */
   onRowHover: (fileId: string | null) => void;
 }
 
 export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane({
   files,
   orphanConfigs,
-  cy,
   onRowHover,
 }, ref) {
   const selectedId = useStore((s) => s.selectedId);
