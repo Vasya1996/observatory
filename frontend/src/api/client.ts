@@ -1,11 +1,14 @@
 import type {
   CwdEntry,
+  CwdTreeResponse,
+  DisabledFilesResponse,
   ExtensionsResponse,
   FileReadResponse,
   IndexResponse,
   NonCanonicalWithSuppressResponse,
   PathProposalsResponse,
   SimulatorResponse,
+  ToggleLoadedFileResponse,
   UiState,
 } from "../types";
 
@@ -40,6 +43,20 @@ export async function fetchCwds(): Promise<CwdEntry[]> {
 export async function fetchSimulate(cwd: string): Promise<SimulatorResponse> {
   const r = await fetch(`/api/simulate?cwd=${encodeURIComponent(cwd)}`);
   if (!r.ok) throw new Error(`/api/simulate ${r.status}`);
+  return r.json();
+}
+
+// Lazy filesystem listing for the ExplorerPane "All files" section.
+// Pass `path` to drill into a subdirectory; omit it to list the cwd root.
+export async function fetchCwdTree(
+  cwd: string,
+  path?: string,
+): Promise<CwdTreeResponse> {
+  const qs = `cwd=${encodeURIComponent(cwd)}${
+    path ? `&path=${encodeURIComponent(path)}` : ""
+  }`;
+  const r = await fetch(`/api/cwd-tree?${qs}`);
+  if (!r.ok) throw new Error(`/api/cwd-tree ${r.status}`);
   return r.json();
 }
 
@@ -350,3 +367,26 @@ export async function fetchTier2Compare(cwd: string, sessionId?: string): Promis
   if (!r.ok) throw new ApiError(r.status, await readError(r));
   return r.json();
 }
+
+// --- Toggle loaded file (per-file ON/OFF in CrossCwdPanel) ------------------
+
+export async function postToggleLoadedFile(
+  path: string,
+  action: "disable" | "enable",
+  cwd: string,
+): Promise<ToggleLoadedFileResponse> {
+  const r = await fetch("/api/toggle-loaded-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, action, cwd }),
+  });
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+
+export async function fetchDisabledFiles(cwd: string): Promise<DisabledFilesResponse> {
+  const r = await fetch(`/api/disabled-files?cwd=${encodeURIComponent(cwd)}`);
+  if (!r.ok) throw new ApiError(r.status, await readError(r));
+  return r.json();
+}
+

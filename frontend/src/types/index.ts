@@ -78,6 +78,23 @@ export interface CwdEntry {
   display: string; // ~-collapsed
 }
 
+// One entry in the lazy-loaded "All files" tree (filesystem listing of the
+// active cwd). Mirrors backend `CwdTreeChild`. `has_children` lets the UI
+// draw a chevron without making a probe fetch first.
+export interface CwdTreeChild {
+  name: string;
+  path: string;  // absolute
+  type: "file" | "directory";
+  has_children: boolean;
+}
+
+export interface CwdTreeResponse {
+  cwd: string;
+  path: string;
+  name: string;
+  children: CwdTreeChild[];
+}
+
 // Mirrors backend `TimelineStatus` (simulator emits these per file). Tree mode
 // extends with two derived states the simulator never returns directly:
 //   * `orphan`  — file exists on disk but not reachable for the active cwd
@@ -97,6 +114,36 @@ export interface TimelineStep {
   // 1=Managed, 2=User-global, 3=Ancestor-walk, 4=Project, 5=Auto-memory, 6=On-demand.
   // Defaults to 6 when absent (older backend) so the badge just doesn't render.
   priority?: number;
+  // Toggle feature: per-file load category and disable state.
+  // Absent in responses from older backends — UI must degrade gracefully.
+  category?: "claude_md" | "rules" | "import" | "auto_memory" | null;
+  disabled?: boolean;
+  disableScope?: "cwd" | "global" | null;
+  containingFile?: string | null;
+}
+
+// --- /api/disabled-files ----------------------------------------------------
+
+export type DisableScope = "cwd" | "global";
+
+export interface DisabledFileEntry {
+  path: string;
+  category: "claude_md" | "rules" | "import" | "auto_memory";
+  disabledAt?: string | null;
+  containingFile?: string | null;
+}
+
+export interface DisabledFilesResponse {
+  cwd_disabled: DisabledFileEntry[];
+  globally_disabled: DisabledFileEntry[];
+}
+
+// --- /api/toggle-loaded-file ------------------------------------------------
+
+export interface ToggleLoadedFileResponse {
+  success: boolean;
+  scope: DisableScope;
+  error?: string;
 }
 
 export interface SimulatorStats {
@@ -220,3 +267,4 @@ export interface PathProposal {
 export interface PathProposalsResponse {
   proposals: PathProposal[];
 }
+

@@ -4384,7 +4384,7 @@ body {
 
 .cross-cwd-row {
   display: grid;
-  grid-template-columns: 32px 1fr 20px;
+  grid-template-columns: 32px 1fr 20px 30px;
   align-items: center;
   gap: 6px;
   padding: 5px 16px 5px 24px;
@@ -4452,6 +4452,213 @@ body {
   height: 1px;
   margin: 8px 0 4px 0;
   background: var(--line);
+}
+
+/* per-row toggle switch — same visual as .explorer-autoload */
+.cross-cwd-toggle {
+  width: 26px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+  appearance: none;
+  padding: 0;
+  transition: background 160ms ease, border-color 160ms ease;
+  justify-self: end;
+}
+.cross-cwd-toggle::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--paper-faint);
+  transition: left 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.cross-cwd-toggle.on {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+.cross-cwd-toggle.on::after {
+  left: 13px;
+  background: var(--ink);
+}
+.cross-cwd-toggle:hover {
+  border-color: var(--paper-faint);
+}
+.cross-cwd-toggle.on:hover {
+  border-color: #ffb84a;
+  background: #ffb84a;
+}
+.cross-cwd-toggle-placeholder {
+  width: 26px;
+  height: 14px;
+  flex-shrink: 0;
+  justify-self: end;
+  display: block;
+}
+
+/* Disabled-row appearance */
+.cross-cwd-row-disabled .cross-cwd-path {
+  opacity: 0.45;
+  text-decoration: line-through;
+  text-decoration-color: rgba(232, 228, 216, 0.25);
+}
+
+/* "off" badge in disabled rows */
+.cross-cwd-badge-off {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--paper-faint);
+  text-align: center;
+  user-select: none;
+}
+
+/* "global" scope badge in disabled rows */
+.cross-cwd-global-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(93, 163, 154, 0.4);
+  color: var(--teal);
+  white-space: nowrap;
+  cursor: help;
+  user-select: none;
+}
+
+/* ---------- Disabled-for-this-folder subsection ---------- */
+.cross-cwd-disabled-section {
+  margin-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.cross-cwd-disabled-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 24px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--paper-faint);
+  text-align: left;
+  transition: color 110ms ease;
+}
+.cross-cwd-disabled-head:hover {
+  color: var(--paper-dim);
+}
+
+.cross-cwd-disabled-chev {
+  font-size: 9px;
+  width: 9px;
+  color: inherit;
+}
+
+.cross-cwd-disabled-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: inherit;
+}
+
+.cross-cwd-disabled-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-faint);
+  margin-left: 4px;
+}
+
+.cross-cwd-disabled-list {
+  padding-bottom: 4px;
+}
+
+/* ---------- LoadedFileDisableModal ---------- */
+
+.lfd-veil {
+  z-index: 110;
+}
+
+.lfd-modal {
+  width: min(480px, 92vw);
+}
+
+.lfd-body {
+  padding: 20px 24px;
+}
+
+.lfd-global-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(207, 103, 71, 0.4);
+  background: rgba(207, 103, 71, 0.08);
+  color: var(--rust);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  margin-bottom: 16px;
+}
+
+.lfd-warn-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.lfd-text {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-style: normal;
+  font-size: 14px;
+  color: var(--paper-dim);
+  margin: 0;
+  line-height: 1.55;
+}
+
+.lfd-text strong {
+  color: var(--paper);
+  font-weight: 500;
+}
+
+.lfd-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--amber);
+  background: rgba(240, 168, 58, 0.08);
+  border: 1px solid rgba(240, 168, 58, 0.2);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+/* Danger variant for the confirm button — rust background instead of amber */
+.modal-foot .btn.danger,
+.modal-foot .btn.primary.danger {
+  background: var(--rust);
+  color: var(--paper);
+  border-color: var(--rust);
+}
+.modal-foot .btn.danger:hover:not(:disabled),
+.modal-foot .btn.primary.danger:hover:not(:disabled) {
+  background: #df7455;
+  border-color: #df7455;
 }
 
 /* ---------- Map legend overlay (locked rule #60) ----------
