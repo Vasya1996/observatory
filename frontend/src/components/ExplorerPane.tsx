@@ -823,6 +823,7 @@ function FileRow({
           applicable={autoloadApplicable}
           on={autoloadOn}
           writable={node.file.writable ?? true}
+          cwd={lastCwd ?? undefined}
         />
       )}
     </div>
