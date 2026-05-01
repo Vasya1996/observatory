@@ -21,18 +21,24 @@ from .models import (
     AutoloadToggleRequest,
     CommittedFile,
     CwdEntry,
+    CwdTreeChild,
+    CwdTreeResponse,
     DeleteConfirmRequest,
     DeleteConfirmResponse,
     DeletePreviewRequest,
     DeletePreviewResponse,
     DeleteUndoRequest,
     DeleteUndoResponse,
+    DisabledFileEntry,
+    DisabledFilesResponse,
     ExtensionsResponse,
     FileEntry,
     FileReadResponse,
     GlobChange,
     ImportRef,
     IndexResponse,
+    LoadedFileEntry,
+    LoadedFilesResponse,
     McpCard,
     MigrateFilePlan,
     MigrateFinalizeRequest,
@@ -54,6 +60,8 @@ from .models import (
     SkillCard,
     SuppressedResponse,
     SuppressRequest,
+    ToggleLoadedFileRequest,
+    ToggleLoadedFileResponse,
     UiState,
     WriteRequest,
     WriteResponse,
@@ -264,6 +272,84 @@ def get_cwds() -> list[CwdEntry]:
         CwdEntry(path=str(p), display=config.collapse_home(p))
         for p in scanner.discover_cwds()
     ]
+
+
+def _has_visible_children(d: Path) -> bool:
+    """True if `d` has at least one non-hidden direct child. Hidden = name
+    starts with `.`. Used by /api/cwd-tree to draw expand chevrons without
+    the client having to fetch every dir to find out."""
+    try:
+        for entry in d.iterdir():
+            if not entry.name.startswith("."):
+                return True
+        return False
+    except OSError:
+        return False
+
+
+@router.get("/cwd-tree", response_model=CwdTreeResponse)
+def get_cwd_tree(
+    cwd: str = Query(...),
+    path: Optional[str] = Query(None),
+) -> CwdTreeResponse:
+    """One-level filesystem listing for the ExplorerPane "All files" section.
+
+    `cwd` — the user-selected project root (must exist).
+    `path` — directory to list. Defaults to `cwd`. Must resolve inside `cwd`
+    (rejects path traversal). Hidden entries (name starts with `.`) are
+    omitted from the response — matching the desktop file-picker behaviour.
+    The listing is intentionally one level deep: clients call this endpoint
+    again with `path=<subdir>` when the user expands a folder.
+    """
+    cwd_path = Path(cwd).expanduser().resolve()
+    if not cwd_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"cwd not a directory: {cwd}")
+
+    if path is None or path == "":
+        target = cwd_path
+    else:
+        target = Path(path).expanduser().resolve()
+
+    try:
+        target.relative_to(cwd_path)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"path is outside cwd: {target} not under {cwd_path}",
+        )
+
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail=f"directory not found: {target}")
+
+    try:
+        raw_entries = list(target.iterdir())
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"could not list directory: {e}")
+
+    # Sort: directories first, then files; alphabetical (case-insensitive)
+    # within each group. Matches typical file-browser ordering.
+    raw_entries.sort(key=lambda p: (not p.is_dir(), p.name.lower()))
+
+    children: list[CwdTreeChild] = []
+    for entry in raw_entries:
+        if entry.name.startswith("."):
+            continue
+        is_dir = entry.is_dir()
+        children.append(
+            CwdTreeChild(
+                name=entry.name,
+                path=str(entry),
+                type="directory" if is_dir else "file",
+                has_children=_has_visible_children(entry) if is_dir else False,
+            )
+        )
+
+    return CwdTreeResponse(
+        cwd=str(cwd_path),
+        path=str(target),
+        name=target.name,
+        children=children,
+    )
 
 
 @router.get("/paths-proposals", response_model=PathProposalsResponse)
@@ -1904,6 +1990,436 @@ def _derive_skill_literal(skill_md_path: Path) -> str | None:
         return None
     plugin_id = skill_md_path.parent.name
     return f"Skill({plugin_id}:{name} *)"
+
+
+# ---------------------------------------------------------------------------
+# Loaded-file toggle — per-file ON/OFF in CrossCwdPanel
+# ---------------------------------------------------------------------------
+
+# State file for globally disabled @-imports. Atomic writes keep it consistent.
+_DISABLED_IMPORTS_STATE = config.HOME / ".claude" / "observatory-disabled-imports.json"
+
+# Auto-memory slug directory prefix — files under this tree.
+_AUTO_MEMORY_PREFIX = str(config.CLAUDE_DIR / "projects")
+
+
+def _classify_loaded_path(path: Path) -> str:
+    """Return the category string for a loaded file path.
+
+    Categories (locked product spec):
+      claude_md  — filename is CLAUDE.md (any level)
+      rules      — path contains /.claude/rules/
+      import     — reachable only via @<path> in some loaded CLAUDE.md
+      auto_memory — under ~/.claude/projects/<slug>/memory/
+
+    We only call this for files that are already "loaded" per the simulator,
+    so we can do simple path-based tests without re-running the full simulator.
+    Category is re-derived server-side on every toggle request (do not trust client).
+    """
+    p_str = str(path)
+    if "/.claude/projects/" in p_str and "/memory/" in p_str:
+        return "auto_memory"
+    if path.name == "CLAUDE.md":
+        return "claude_md"
+    if "/.claude/rules/" in p_str:
+        return "rules"
+    return "import"
+
+
+def _find_containing_file_for_import(
+    files: list, target: Path
+) -> Path | None:
+    """Locate the CLAUDE.md that contains the @-line importing `target`.
+
+    Walks all claude_md and rule files in the scanned index, parses @-lines
+    (handles ~/, absolute, and relative paths — relative resolves against the
+    importing file's directory). Returns the first containing file found.
+    """
+    target_abs = str(target)
+    target_display = config.collapse_home(target)
+    import_patterns = [f"@{target_display}", f"@{target_abs}"]
+
+    for f in files:
+        if f.kind not in ("claude_md", "rule"):
+            continue
+        try:
+            text = Path(f.path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parent_dir = Path(f.path).parent
+        for line in text.splitlines():
+            stripped = line.strip()
+            # Handle currently-disabled lines too (they have a comment prefix).
+            if stripped.startswith(_DISABLED_COMMENT_PREFIX):
+                stripped = stripped[len(_DISABLED_COMMENT_PREFIX):]
+            for pat in import_patterns:
+                if stripped == pat or stripped.startswith(pat + " "):
+                    return Path(f.path)
+            # Also try to resolve relative @-paths from the parent dir.
+            if stripped.startswith("@") and not stripped.startswith("@~/") and not stripped.startswith("@/"):
+                raw = stripped[1:].split()[0] if stripped[1:] else ""
+                if raw:
+                    resolved = (parent_dir / raw).resolve()
+                    if str(resolved) == target_abs:
+                        return Path(f.path)
+    return None
+
+
+def _is_cwd_disabled(target: Path, cwd: Path) -> bool:
+    """True if target is in the claudeMdExcludes list of <cwd>/.claude/settings.json."""
+    settings_path = cwd / ".claude" / "settings.json"
+    if not settings_path.is_file():
+        return False
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    excludes = data.get("claudeMdExcludes", [])
+    if not isinstance(excludes, list):
+        excludes = [excludes] if excludes else []
+    target_str = str(target)
+    for entry in excludes:
+        entry_str = str(entry)
+        if entry_str == target_str:
+            return True
+        try:
+            spec = _pathspec.PathSpec.from_lines("gitwildmatch", [entry_str])
+            if spec.match_file(target_str):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _load_disabled_imports_state() -> dict:
+    """Load the disabled-imports state file. Returns default on missing/corrupt."""
+    if not _DISABLED_IMPORTS_STATE.is_file():
+        return {"version": 1, "imports": {}}
+    try:
+        data = json.loads(_DISABLED_IMPORTS_STATE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or "imports" not in data:
+            return {"version": 1, "imports": {}}
+        return data
+    except (OSError, json.JSONDecodeError):
+        return {"version": 1, "imports": {}}
+
+
+def _save_disabled_imports_state(state: dict) -> None:
+    """Atomically write the disabled-imports state file."""
+    writer.take_snapshot(_DISABLED_IMPORTS_STATE)
+    writer.atomic_write(
+        _DISABLED_IMPORTS_STATE,
+        json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+    )
+
+
+def _is_globally_disabled(target: Path) -> bool:
+    """True if the target path is in the disabled-imports state file."""
+    state = _load_disabled_imports_state()
+    return str(target) in state.get("imports", {})
+
+
+@router.get("/loaded-files", response_model=LoadedFilesResponse)
+def get_loaded_files(req: Request, cwd: str = Query(...)) -> LoadedFilesResponse:
+    """Return the list of files loaded for a cwd with category, disabled state, and scope.
+
+    Only returns files with status="loaded" that live OUTSIDE the active cwd
+    (mirroring the CrossCwdPanel filter). For each file the response carries:
+      category     — claude_md | rules | import | auto_memory
+      disabled     — whether it is currently disabled for this cwd (or globally)
+      disable_scope — "cwd" | "global" | null
+      containing_file — for import category: the CLAUDE.md that has the @-line
+    """
+    cwd_path = Path(cwd).expanduser().resolve()
+    if not cwd_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"cwd not a directory: {cwd}")
+
+    files, edges, _ = _cache(req).snapshot()
+    sim = simulate(cwd_path, files, edges)
+
+    files_map = {f.id: f for f in files}
+    files_by_path = {Path(f.path).resolve(): f for f in files}
+
+    state = _load_disabled_imports_state()
+    disabled_imports: set[str] = set(state.get("imports", {}).keys())
+
+    result: list[LoadedFileEntry] = []
+    seen: set[str] = set()
+
+    for step in sim.steps:
+        if step.status != "loaded":
+            continue
+        abs_path_str = step.file_path
+        abs_path = Path(abs_path_str.replace("~/", str(config.HOME) + "/")).resolve() if abs_path_str.startswith("~/") else Path(abs_path_str).resolve()
+
+        # Only files outside the active cwd.
+        try:
+            abs_path.relative_to(cwd_path)
+            continue
+        except ValueError:
+            pass
+
+        path_key = str(abs_path)
+        if path_key in seen:
+            continue
+        seen.add(path_key)
+
+        category = _classify_loaded_path(abs_path)
+
+        if category == "auto_memory":
+            disable_scope = None
+            disabled = False
+            containing_file = None
+        elif category in ("claude_md", "rules"):
+            disable_scope = "cwd"
+            disabled = _is_cwd_disabled(abs_path, cwd_path)
+            containing_file = None
+        else:
+            # import category
+            disable_scope = "global"
+            disabled = path_key in disabled_imports
+            containing = _find_containing_file_for_import(files, abs_path)
+            containing_file = str(containing) if containing else None
+
+        result.append(LoadedFileEntry(
+            path=path_key,
+            display=config.collapse_home(abs_path),
+            category=category,
+            disabled=disabled,
+            disable_scope=disable_scope,
+            containing_file=containing_file,
+        ))
+
+    return LoadedFilesResponse(loaded=result)
+
+
+@router.post("/toggle-loaded-file", response_model=ToggleLoadedFileResponse)
+def post_toggle_loaded_file(req: Request, body: ToggleLoadedFileRequest) -> ToggleLoadedFileResponse:
+    """Enable or disable autoload for a cross-cwd file in the CrossCwdPanel.
+
+    Dispatches on category (recomputed server-side from `path`):
+      claude_md / rules — edit <cwd>/.claude/settings.json claudeMdExcludes (cwd scope)
+      import            — remove/restore the @-line in the containing CLAUDE.md (global scope)
+      auto_memory       — 400 error (managed by global toggle)
+    """
+    target = Path(body.path).expanduser().resolve()
+    cwd_path = Path(body.cwd).expanduser().resolve()
+
+    files, _, _ = _cache(req).snapshot()
+
+    category = _classify_loaded_path(target)
+
+    if category == "auto_memory":
+        raise HTTPException(status_code=400, detail="auto-memory is managed by the global toggle")
+
+    if category in ("claude_md", "rules"):
+        return _toggle_cwd_scoped(target, cwd_path, body.action)
+
+    # import category
+    return _toggle_global_import(files, target, body.action)
+
+
+def _toggle_cwd_scoped(target: Path, cwd: Path, action: str) -> ToggleLoadedFileResponse:
+    """Add/remove target from claudeMdExcludes in <cwd>/.claude/settings.json."""
+    settings_path = cwd / ".claude" / "settings.json"
+    try:
+        current = settings_path.read_text(encoding="utf-8") if settings_path.is_file() else "{}\n"
+    except OSError as exc:
+        return ToggleLoadedFileResponse(success=False, error=f"settings.json read error: {exc}")
+    try:
+        data: dict = json.loads(current)
+    except json.JSONDecodeError as exc:
+        return ToggleLoadedFileResponse(success=False, error=f"settings.json parse error: {exc}")
+
+    target_str = str(target)
+    excludes: list = data.get("claudeMdExcludes", [])
+    if not isinstance(excludes, list):
+        excludes = [excludes] if excludes else []
+
+    if action == "disable":
+        already = False
+        for entry in excludes:
+            if str(entry) == target_str:
+                already = True
+                break
+            try:
+                spec = _pathspec.PathSpec.from_lines("gitwildmatch", [str(entry)])
+                if spec.match_file(target_str):
+                    already = True
+                    break
+            except Exception:
+                pass
+        if already:
+            return ToggleLoadedFileResponse(success=True, scope="cwd")
+        excludes.append(target_str)
+        data["claudeMdExcludes"] = excludes
+    else:
+        new_excludes = []
+        for entry in excludes:
+            entry_str = str(entry)
+            if entry_str == target_str:
+                continue
+            try:
+                spec = _pathspec.PathSpec.from_lines("gitwildmatch", [entry_str])
+                if spec.match_file(target_str):
+                    continue
+            except Exception:
+                pass
+            new_excludes.append(entry_str)
+        if new_excludes:
+            data["claudeMdExcludes"] = new_excludes
+        else:
+            data.pop("claudeMdExcludes", None)
+
+    new_content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    try:
+        writer.take_snapshot(settings_path)
+        writer.atomic_write(settings_path, new_content)
+    except OSError as exc:
+        return ToggleLoadedFileResponse(success=False, error=f"write error: {exc}")
+
+    return ToggleLoadedFileResponse(success=True, scope="cwd")
+
+
+def _toggle_global_import(files: list, target: Path, action: str) -> ToggleLoadedFileResponse:
+    """Remove/restore the @-line in the containing CLAUDE.md. Updates state file."""
+    target_str = str(target)
+    state = _load_disabled_imports_state()
+    imports: dict = state.setdefault("imports", {})
+
+    if action == "enable":
+        if target_str not in imports:
+            return ToggleLoadedFileResponse(success=True, scope="global")
+        record = imports[target_str]
+        containing = Path(record["containingFile"])
+        original_line = record["originalLine"]
+        line_index = record["lineIndex"]
+
+        try:
+            text = containing.read_text(encoding="utf-8")
+        except OSError as exc:
+            return ToggleLoadedFileResponse(success=False, error=f"read error on containing file: {exc}")
+
+        lines = text.splitlines(keepends=True)
+        # Insert at the original index; clamp to end if file shrank.
+        insert_at = min(line_index, len(lines))
+        restored_line = original_line if original_line.endswith("\n") else original_line + "\n"
+        lines.insert(insert_at, restored_line)
+        new_text = "".join(lines)
+
+        try:
+            writer.take_snapshot(containing)
+            writer.atomic_write(containing, new_text)
+        except OSError as exc:
+            return ToggleLoadedFileResponse(success=False, error=f"write error: {exc}")
+
+        del imports[target_str]
+        try:
+            _save_disabled_imports_state(state)
+        except OSError as exc:
+            return ToggleLoadedFileResponse(success=False, error=f"state file write error: {exc}")
+
+        return ToggleLoadedFileResponse(success=True, scope="global")
+
+    # action == "disable"
+    if target_str in imports:
+        return ToggleLoadedFileResponse(success=True, scope="global")
+
+    containing = _find_containing_file_for_import(files, target)
+    if containing is None:
+        return ToggleLoadedFileResponse(success=False, error="import line not found in containing file")
+
+    try:
+        text = containing.read_text(encoding="utf-8")
+    except OSError as exc:
+        return ToggleLoadedFileResponse(success=False, error=f"read error: {exc}")
+
+    target_display = config.collapse_home(target)
+    import_patterns = [f"@{target_display}", f"@{str(target)}"]
+    lines = text.splitlines(keepends=True)
+    found_index: int | None = None
+    original_line: str | None = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        for pat in import_patterns:
+            if stripped == pat or stripped.startswith(pat + " "):
+                found_index = i
+                original_line = line.rstrip("\n")
+                break
+        if found_index is not None:
+            break
+
+    if found_index is None:
+        return ToggleLoadedFileResponse(success=False, error="import line not found in containing file")
+
+    # Remove the line. Preserve surrounding blank lines to avoid layout disruption.
+    new_lines = lines[:found_index] + lines[found_index + 1:]
+    new_text = "".join(new_lines)
+
+    try:
+        writer.take_snapshot(containing)
+        writer.atomic_write(containing, new_text)
+    except OSError as exc:
+        return ToggleLoadedFileResponse(success=False, error=f"write error: {exc}")
+
+    imports[target_str] = {
+        "originalLine": original_line,
+        "containingFile": str(containing),
+        "lineIndex": found_index,
+        "disabledAt": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        _save_disabled_imports_state(state)
+    except OSError as exc:
+        return ToggleLoadedFileResponse(success=False, error=f"state file write error: {exc}")
+
+    return ToggleLoadedFileResponse(success=True, scope="global")
+
+
+@router.get("/disabled-files", response_model=DisabledFilesResponse)
+def get_disabled_files(cwd: str = Query(...)) -> DisabledFilesResponse:
+    """Return the two buckets of disabled files for a given cwd.
+
+    cwd_disabled   — paths in <cwd>/.claude/settings.json claudeMdExcludes
+    globally_disabled — records in the observatory-disabled-imports.json state file
+    """
+    cwd_path = Path(cwd).expanduser().resolve()
+
+    # CWD bucket: read claudeMdExcludes from project settings.json.
+    cwd_entries: list[DisabledFileEntry] = []
+    settings_path = cwd_path / ".claude" / "settings.json"
+    if settings_path.is_file():
+        try:
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+            raw = data.get("claudeMdExcludes", [])
+            if not isinstance(raw, list):
+                raw = [raw] if raw else []
+            for entry in raw:
+                p = Path(str(entry)).expanduser().resolve()
+                cat = _classify_loaded_path(p)
+                cwd_entries.append(DisabledFileEntry(
+                    path=str(p),
+                    category=cat,
+                ))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Global bucket: from the state file.
+    state = _load_disabled_imports_state()
+    global_entries: list[DisabledFileEntry] = []
+    for path_str, record in state.get("imports", {}).items():
+        global_entries.append(DisabledFileEntry(
+            path=path_str,
+            category="import",
+            disabled_at=record.get("disabledAt"),
+            containing_file=record.get("containingFile"),
+        ))
+
+    return DisabledFilesResponse(
+        cwd_disabled=cwd_entries,
+        globally_disabled=global_entries,
+    )
 
 
 @router.get("/events")

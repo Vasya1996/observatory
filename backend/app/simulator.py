@@ -2,16 +2,23 @@
 
 Given a cwd, return the ordered list of files that would be loaded into a
 Claude Code session at start, plus on-demand-reachable files. The model
-mirrors Claude Code's actual behaviour:
+mirrors Claude Code's actual behaviour, matching what `/memory` reports:
 
   1. `~/.claude/CLAUDE.md` always.
   2. `~/.claude/rules/*.md` without `paths:` always.
-  3. `~/.claude/rules/*.md` with `paths:` — loaded if cwd matches, else conditional.
+  3. `~/.claude/rules/*.md` with `paths:` — ALWAYS on-demand, never session-
+     loaded (per Claude Code docs: "Path-scoped rules trigger when Claude
+     reads files matching the pattern, not on every tool use"). They show
+     up in the timeline as `conditional` regardless of whether the cwd
+     matches the glob — a matched glob just means the rule will load on
+     the first matching file read, not at session start.
   4. For the session cwd specifically: also load `<cwd>/.claude/CLAUDE.md`
      (team-shared project instructions, per official Claude Code docs).
   5. Walk UP from cwd to `~`: at each level, load `<dir>/CLAUDE.md` AND
      `<dir>/CLAUDE.local.md` if either exists, plus `<dir>/.claude/rules/*.md`
-     (same `paths:` rule).
+     (same `paths:` rule — paths-scoped → on-demand).
+  5b. Auto-memory `~/.claude/projects/<key>/memory/MEMORY.md` for the active
+     cwd (first 200 lines / 25KB loaded at session start, per Claude Code docs).
   6. Transitively chase `@-import` from anything loaded.
   7. `mention`-reachable files → on-demand-reachable (skipped, but counted).
 
@@ -300,6 +307,13 @@ def simulate(
         _push(user_global, "loaded", "user-global", "Always loaded at session start")
 
     # 2 + 3. Global rules at ~/.claude/rules/
+    # Per Claude Code docs (memory.md, "Path-specific rules"):
+    # > Path-scoped rules trigger when Claude reads files matching the pattern,
+    # > not on every tool use.
+    # Path-scoped rules NEVER load at session start, even when their paths:
+    # globs match the active cwd. They are always on-demand and `/memory`
+    # never lists them. Mark them as `conditional` so they show up in the
+    # On-demand tier but stay out of the "Also loaded for this folder" panel.
     for f in files:
         if f.kind != "rule":
             continue
@@ -312,7 +326,11 @@ def simulate(
         else:
             matched = _matches_paths(f.paths_globs, cwd)
             if matched:
-                _push(f, "loaded", matched, "paths: glob matched cwd")
+                _push(
+                    f, "conditional", matched,
+                    "paths: glob matches cwd; loaded on-demand "
+                    "when Claude reads a file matching the pattern",
+                )
             else:
                 _push(
                     f, "conditional", None,
@@ -369,10 +387,17 @@ def simulate(
                     _push(f, "loaded", "no-paths",
                           f"Per-repo rule, no paths: filter (under {config.collapse_home(d)})")
             else:
+                # Path-scoped rules are always on-demand — never session-loaded
+                # — regardless of whether the cwd matches. (See the global
+                # rules block above for the docs citation.)
                 matched = _matches_paths(f.paths_globs, cwd)
                 if matched:
                     if f.id not in loaded_ids:
-                        _push(f, "loaded", matched, "paths: glob matched cwd")
+                        _push(
+                            f, "conditional", matched,
+                            "paths: glob matches cwd; loaded on-demand "
+                            "when Claude reads a file matching the pattern",
+                        )
                 elif f.id not in loaded_ids:
                     _push(f, "conditional", None,
                           f"paths: {f.paths_globs} did not match cwd")
@@ -391,6 +416,33 @@ def simulate(
             if local_cm and local_cm.id not in loaded_ids and not _is_excluded(local_cm):
                 _push(local_cm, "loaded", "add-dir",
                       f"CLAUDE.local.md from --add-dir path {config.collapse_home(extra)}")
+
+    # 5b. Auto-memory MEMORY.md for the active cwd.
+    # Per Claude Code docs (memory.md, "Auto memory"):
+    # > The first 200 lines of MEMORY.md, or the first 25KB, whichever comes
+    # > first, are loaded at the start of every conversation.
+    # Each project gets `~/.claude/projects/<project>/memory/MEMORY.md`,
+    # where <project> is the cwd path with `/` replaced by `-` (Claude Code
+    # convention; for git worktrees Claude Code resolves the repo root, but
+    # Observatory has no git knowledge — using the cwd verbatim is correct
+    # for the common case where cwd == git root and is a no-op miss otherwise).
+    auto_memory_key = str(cwd).replace("/", "-")
+    auto_memory_path = (
+        config.CLAUDE_DIR / "projects" / auto_memory_key / "memory" / "MEMORY.md"
+    )
+    auto_memory_file = by_path.get(str(auto_memory_path))
+    if (
+        auto_memory_file
+        and auto_memory_file.id not in loaded_ids
+        and not _is_excluded(auto_memory_file)
+    ):
+        _push(
+            auto_memory_file,
+            "loaded",
+            "automemory",
+            f"Auto-memory MEMORY.md for {config.collapse_home(cwd)} "
+            "(first 200 lines / 25KB loaded at session start)",
+        )
 
     # 6. Transitive @-imports.
     # Drift fix #5: pass the parent's priority so imported files inherit tier.
@@ -438,6 +490,8 @@ def simulate(
     )
     on_demand_reachable = sum(1 for s in steps if s.status == "skipped")
 
+    _enrich_toggle_metadata(steps, cwd, files, exclude_globs)
+
     return SimulatorResponse(
         cwd=str(cwd),
         steps=steps,
@@ -448,3 +502,116 @@ def simulate(
             on_demand_reachable=on_demand_reachable,
         ),
     )
+
+
+def _enrich_toggle_metadata(
+    steps: list[TimelineStep],
+    cwd: Path,
+    files: list[FileEntry],
+    cwd_exclude_globs: list[str],
+) -> None:
+    """Inject category / disabled / disable_scope / containing_file into each
+    cross-cwd loaded step so the frontend CrossCwdPanel can render toggles
+    without a second API call.
+
+    Only "loaded" steps whose file_path resolves outside the active cwd get
+    enriched — all others keep category=None (saves bandwidth and avoids
+    confusing the in-tree file rows).
+    """
+    # Read disabled-imports state file (global bucket).
+    state_file = config.HOME / ".claude" / "observatory-disabled-imports.json"
+    disabled_imports: set[str] = set()
+    if state_file.is_file():
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            disabled_imports = set(data.get("imports", {}).keys())
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    files_by_path = {Path(f.path).resolve(): f for f in files}
+
+    for step in steps:
+        if step.status != "loaded":
+            continue
+        raw = step.file_path
+        if raw.startswith("~/"):
+            abs_path = config.HOME / raw[2:]
+        else:
+            abs_path = Path(raw)
+        abs_path = abs_path.resolve()
+
+        # Skip files inside the cwd — they are not cross-cwd.
+        try:
+            abs_path.relative_to(cwd)
+            continue
+        except ValueError:
+            pass
+
+        path_str = str(abs_path)
+
+        # Determine category.
+        if "/.claude/projects/" in path_str and "/memory/" in path_str:
+            cat: str = "auto_memory"
+        elif abs_path.name == "CLAUDE.md":
+            cat = "claude_md"
+        elif "/.claude/rules/" in path_str:
+            cat = "rules"
+        else:
+            cat = "import"
+
+        step.category = cat  # type: ignore[assignment]
+
+        if cat == "auto_memory":
+            step.disabled = False
+            step.disable_scope = None
+            step.containing_file = None
+            continue
+
+        if cat in ("claude_md", "rules"):
+            step.disable_scope = "cwd"
+            # Check claudeMdExcludes in the cwd settings.json.
+            disabled_here = _path_matches_glob_list(abs_path, cwd_exclude_globs)
+            step.disabled = disabled_here
+            step.containing_file = None
+        else:
+            # import category
+            step.disable_scope = "global"
+            step.disabled = path_str in disabled_imports
+            # Locate the containing CLAUDE.md for the confirmation modal.
+            containing = _find_import_containing_file(abs_path, files)
+            step.containing_file = str(containing) if containing else None
+
+
+def _find_import_containing_file(target: Path, files: list[FileEntry]) -> Path | None:
+    """Find the CLAUDE.md that @-imports target. Returns None if not found."""
+    target_abs = str(target)
+    target_display = config.collapse_home(target)
+    import_patterns = [f"@{target_display}", f"@{target_abs}"]
+
+    for f in files:
+        if f.kind not in ("claude_md", "rule"):
+            continue
+        try:
+            text = Path(f.path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parent_dir = Path(f.path).parent
+        for line in text.splitlines():
+            stripped = line.strip()
+            # Also handle disabled lines (comment prefix).
+            if "<!-- [disabled by Observatory] -->" in stripped:
+                stripped = stripped.split("-->", 1)[-1].strip()
+            for pat in import_patterns:
+                if stripped == pat or stripped.startswith(pat + " "):
+                    return Path(f.path)
+            # Relative @-paths.
+            if stripped.startswith("@") and not stripped.startswith("@~/") and not stripped.startswith("@/"):
+                raw = stripped[1:].split()[0] if stripped[1:] else ""
+                if raw:
+                    try:
+                        resolved = (parent_dir / raw).resolve()
+                        if str(resolved) == target_abs:
+                            return Path(f.path)
+                    except OSError:
+                        pass
+    return None

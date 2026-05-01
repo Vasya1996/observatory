@@ -100,6 +100,25 @@ class CwdEntry(BaseModel):
     display: str  # ~-collapsed
 
 
+class CwdTreeChild(BaseModel):
+    """One entry inside a directory listing for the ExplorerPane "All files"
+    section. Lazy-loaded: clients fetch /api/cwd-tree?path=<dir> when the
+    user expands a folder. `has_children` lets the UI decide whether to draw
+    a chevron without making a probe request.
+    """
+    name: str
+    path: str  # absolute
+    type: Literal["file", "directory"]
+    has_children: bool = False
+
+
+class CwdTreeResponse(BaseModel):
+    cwd: str  # the active cwd this listing is for (absolute, resolved)
+    path: str  # the directory whose children this response describes
+    name: str  # basename of `path`
+    children: list[CwdTreeChild]
+
+
 class TimelineStep(BaseModel):
     idx: int
     file_id: Optional[str]
@@ -121,6 +140,13 @@ class TimelineStep(BaseModel):
     #   on-demand    = 6  (paths-scoped rules, mention-reachable, nested CLAUDE.md)
     # Non-breaking: defaults to 6 (on-demand) so older serialised steps parse safely.
     priority: int = 6
+    # Toggle feature enrichment — only populated for cross-cwd loaded steps
+    # (files loaded for this cwd that live OUTSIDE the cwd). Null for steps
+    # inside the cwd or for non-loaded steps. Non-breaking: old FE ignores.
+    category: Optional[Literal["claude_md", "rules", "import", "auto_memory"]] = None
+    disabled: Optional[bool] = None
+    disable_scope: Optional[Literal["cwd", "global"]] = None
+    containing_file: Optional[str] = None
 
 
 class SimulatorStats(BaseModel):
@@ -524,3 +550,53 @@ class AutoloadTogglePreviewResponse(BaseModel):
     mechanism: Optional[AutoloadMechanism] = None
     # Set when toggle_applicable is False.
     reason: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Loaded-file toggle (CrossCwdPanel per-file ON/OFF)
+# ---------------------------------------------------------------------------
+
+LoadedFileCategory = Literal[
+    "claude_md",    # any CLAUDE.md — toggle via claudeMdExcludes in <cwd>/settings.json
+    "rules",        # /.claude/rules/*.md — same mechanism as claude_md
+    "import",       # @-imported file — toggle via removing/restoring the @-line
+    "auto_memory",  # ~/.claude/projects/<slug>/memory/* — managed globally, no per-file toggle
+]
+
+
+class LoadedFileEntry(BaseModel):
+    """One entry in the /api/loaded-files response."""
+    path: str                           # absolute path
+    display: str                        # ~-collapsed
+    category: LoadedFileCategory
+    disabled: bool
+    disable_scope: Optional[Literal["cwd", "global"]] = None
+    containing_file: Optional[str] = None  # for import category: the CLAUDE.md with the @-line
+
+
+class LoadedFilesResponse(BaseModel):
+    loaded: list[LoadedFileEntry]
+
+
+class ToggleLoadedFileRequest(BaseModel):
+    path: str       # absolute path of the file to toggle
+    action: Literal["disable", "enable"]
+    cwd: str        # active project cwd (required for cwd-scope operations)
+
+
+class ToggleLoadedFileResponse(BaseModel):
+    success: bool
+    scope: Optional[Literal["cwd", "global"]] = None
+    error: Optional[str] = None
+
+
+class DisabledFileEntry(BaseModel):
+    path: str
+    category: LoadedFileCategory
+    disabled_at: Optional[str] = None
+    containing_file: Optional[str] = None
+
+
+class DisabledFilesResponse(BaseModel):
+    cwd_disabled: list[DisabledFileEntry]
+    globally_disabled: list[DisabledFileEntry]
