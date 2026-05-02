@@ -381,6 +381,10 @@ class MigratePreviewRequest(BaseModel):
     dst_dir: Optional[str] = None
     # active_cwd is required for move-to-path to enforce the containment check.
     active_cwd: Optional[str] = None
+    # move-to-path rename: when set, the destination filename differs from the
+    # source basename.  Must not contain path separators.  Treated as rename
+    # when dst_dir == parent(source) and new_name != source.name.
+    new_name: Optional[str] = None
 
 
 class GlobChange(BaseModel):

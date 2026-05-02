@@ -1010,7 +1010,12 @@ def post_migrate_preview(
         if not dst_dir.is_dir():
             raise HTTPException(status_code=400, detail=f"dst_dir is not a directory: {body.dst_dir}")
 
-        basename = source.name
+        if body.new_name:
+            if "/" in body.new_name or "\\" in body.new_name:
+                raise HTTPException(status_code=400, detail="new_name must not contain path separators.")
+            basename = body.new_name
+        else:
+            basename = source.name
         dest_file = dst_dir / basename
 
         # Refuse to overwrite an existing file — no silent clobbers.

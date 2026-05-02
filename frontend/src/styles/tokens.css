@@ -4775,3 +4775,231 @@ body {
   color: var(--paper-dim);
   line-height: 1.4;
 }
+
+/* ============================================================ */
+/* MoveConfirmModal                                             */
+/* ============================================================ */
+
+.move-confirm-modal {
+  width: min(520px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.move-confirm-header {
+  padding: 18px 22px 14px 22px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.move-confirm-title {
+  font-family: "Instrument Serif", serif;
+  font-size: 22px;
+  color: var(--paper);
+  letter-spacing: -0.01em;
+}
+
+.move-confirm-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--paper-faint);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 100ms ease;
+}
+.move-confirm-close:hover { color: var(--paper); }
+
+.move-confirm-body {
+  padding: 18px 22px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.move-confirm-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.move-confirm-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  flex-shrink: 0;
+  width: 36px;
+}
+
+.move-confirm-path {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper);
+  word-break: break-all;
+}
+
+.move-confirm-loading {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-faint);
+  padding: 8px 0;
+}
+
+.move-confirm-error {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 12px;
+  color: var(--rust);
+  border: 1px solid var(--rust);
+  border-radius: 6px;
+  padding: 8px 12px;
+  line-height: 1.4;
+}
+
+.move-confirm-sim-diff {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.move-confirm-sim-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  margin-bottom: 4px;
+}
+
+.move-confirm-sim-none {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--paper-faint);
+}
+
+.move-confirm-sim-row {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.move-confirm-sim-row.added  { color: var(--lime, #8fbf6a); }
+.move-confirm-sim-row.removed { color: var(--rust); }
+.move-confirm-sim-row.changed { color: var(--amber); }
+
+.move-confirm-orphans {
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.move-confirm-orphans-title {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 12px;
+  color: var(--amber);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.move-confirm-orphan-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--paper-dim);
+}
+
+.move-confirm-orphan-line {
+  color: var(--paper-faint);
+  flex-shrink: 0;
+}
+
+.move-confirm-footer {
+  padding: 14px 22px 18px 22px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.move-confirm-cancel-btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--paper-dim);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 100ms ease, color 100ms ease;
+}
+.move-confirm-cancel-btn:hover:not(:disabled) {
+  border-color: var(--paper-dim);
+  color: var(--paper);
+}
+
+.move-confirm-ok-btn {
+  appearance: none;
+  border: 1px solid var(--amber);
+  background: transparent;
+  color: var(--amber);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+.move-confirm-ok-btn:hover:not(:disabled) {
+  background: var(--amber);
+  color: #0b0b0e;
+}
+.move-confirm-ok-btn:disabled,
+.move-confirm-cancel-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ctx-rename-input — inline name field inside ctx-confirm */
+.ctx-rename-input {
+  width: 100%;
+  background: var(--ink-3, #1a1a22);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--paper);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 5px 8px;
+  outline: none;
+  box-sizing: border-box;
+}
+.ctx-rename-input:focus {
+  border-color: var(--amber);
+}

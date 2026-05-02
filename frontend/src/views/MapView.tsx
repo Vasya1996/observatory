@@ -248,8 +248,9 @@ export function MapView() {
       writable: pluginManaged ? false : (file.writable ?? true),
       x: e.clientX,
       y: e.clientY,
+      activeCwd: lastCwd ?? undefined,
     });
-  }, []);
+  }, [lastCwd]);
 
   // Right-click on graph canvas: find the node under the pointer and show context menu.
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

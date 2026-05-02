@@ -1,10 +1,11 @@
 /**
  * ContextMenu — small floating panel at cursor position for right-click on
- * graph nodes and simulator slot cards. Currently has one entry: "Delete file".
- *
- * Non-writable or read-only files get a disabled entry with an explanation.
- * The confirm dialog is inlined here; the actual delete pipeline
- * (POST /api/delete → /api/delete-confirm) is called directly.
+ * graph nodes, tree rows and CrossCwdPanel rows. Entries:
+ *   - "Edit file…" — opens EditorPanel via setEditorOpen(path, true).
+ *     Hidden entirely for plugin-managed files (target.writable === false).
+ *   - "Rename…" — inline rename modal using move-to-path mode.
+ *   - "Delete file…" — disabled for plugin-managed files; otherwise opens an
+ *     inline confirm and runs POST /api/delete → /api/delete-confirm.
  *
  * After a successful delete, a long-lived toast (10s) carries an Undo button
  * that calls POST /api/delete-undo with the snapshot_id.
@@ -12,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { postDeletePreview, postDeleteConfirm, ApiError } from "../api/client";
 import { useStore } from "../state/store";
+import { MoveConfirmModal } from "./MoveConfirmModal";
 
 export interface ContextMenuTarget {
   path: string;
@@ -19,6 +21,7 @@ export interface ContextMenuTarget {
   writable: boolean;
   x: number; // client X
   y: number; // client Y
+  activeCwd?: string;
 }
 
 interface Props {
@@ -29,6 +32,9 @@ interface Props {
 export function ContextMenu({ target, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameMoveOpen, setRenameMoveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const setEditorOpen = useStore((s) => s.setEditorOpen);
   const editorPath = useStore((s) => s.editorPath);
@@ -58,6 +64,26 @@ export function ContextMenu({ target, onClose }: Props) {
   }, [target, onClose]);
 
   if (!target) return null;
+
+  const parentDir = target.path.includes("/")
+    ? target.path.substring(0, target.path.lastIndexOf("/"))
+    : target.path;
+
+  const handleRenameClick = () => {
+    setRenameDraft(target.path.split("/").pop() ?? "");
+    setRenameOpen(true);
+  };
+
+  const handleRenameSubmit = () => {
+    const newName = renameDraft.trim();
+    if (!newName || newName === (target.path.split("/").pop() ?? "")) {
+      setRenameOpen(false);
+      onClose();
+      return;
+    }
+    setRenameOpen(false);
+    setRenameMoveOpen(true);
+  };
 
   const handleDeleteClick = () => {
     if (!target.writable) return;
@@ -109,6 +135,56 @@ export function ContextMenu({ target, onClose }: Props) {
     top: target.y,
   };
 
+  if (renameMoveOpen && target.activeCwd) {
+    return (
+      <MoveConfirmModal
+        sourcePath={target.path}
+        dstDir={parentDir}
+        activeCwd={target.activeCwd}
+        newName={renameDraft.trim()}
+        onClose={() => { setRenameMoveOpen(false); onClose(); }}
+      />
+    );
+  }
+
+  if (renameOpen) {
+    return (
+      <div ref={menuRef} className="ctx-confirm" style={menuStyle} role="dialog" aria-modal aria-label="Rename file">
+        <div className="ctx-confirm-title">Rename <b>{target.displayName}</b></div>
+        <div className="ctx-confirm-body">
+          <input
+            className="ctx-rename-input"
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleRenameSubmit();
+              if (e.key === "Escape") { setRenameOpen(false); onClose(); }
+            }}
+            autoFocus
+            spellCheck={false}
+          />
+        </div>
+        <div className="ctx-confirm-btns">
+          <button
+            type="button"
+            className="ctx-confirm-cancel"
+            onClick={() => { setRenameOpen(false); onClose(); }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="ctx-confirm-delete"
+            onClick={handleRenameSubmit}
+            disabled={!renameDraft.trim()}
+          >
+            Rename
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (confirmOpen) {
     return (
       <div ref={menuRef} className="ctx-confirm" style={menuStyle} role="dialog" aria-modal aria-label="Confirm delete">
@@ -140,8 +216,34 @@ export function ContextMenu({ target, onClose }: Props) {
     );
   }
 
+  const handleEditClick = () => {
+    setEditorOpen(target.path, true);
+    onClose();
+  };
+
   return (
     <div ref={menuRef} className="ctx-menu" style={menuStyle} role="menu">
+      {/* Edit entry — hidden entirely for plugin-managed (read-only) files. */}
+      {target.writable && (
+        <button
+          type="button"
+          className="ctx-menu-item"
+          role="menuitem"
+          onClick={handleEditClick}
+        >
+          Edit file…
+        </button>
+      )}
+      {target.writable && target.activeCwd && (
+        <button
+          type="button"
+          className="ctx-menu-item"
+          role="menuitem"
+          onClick={handleRenameClick}
+        >
+          Rename…
+        </button>
+      )}
       {target.writable ? (
         <button
           type="button"

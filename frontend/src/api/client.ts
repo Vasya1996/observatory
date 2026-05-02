@@ -231,12 +231,15 @@ export interface MigrateFinalizeResponse {
 
 export async function postMigratePreview(body: {
   source_path: string;
-  mode: "rule" | "merge" | "add-paths" | "remove-paths" | "move-to-project";
+  mode: "rule" | "merge" | "add-paths" | "remove-paths" | "move-to-project" | "move-to-path";
   target_dir_or_file?: string;
   new_filename?: string;
   delete_original?: boolean;
   paths_globs?: string[];
   target_cwd?: string;
+  dst_dir?: string;
+  active_cwd?: string;
+  new_name?: string;
 }): Promise<MigratePreviewResponse> {
   const r = await fetch("/api/migrate-preview", {
     method: "POST",

@@ -46,9 +46,9 @@ import {
   type TreeGroup,
   type TreeNode,
 } from "./explorerTree";
-import { NormalizeWizardModal, type NormalizeMode } from "./NormalizeWizardModal";
 import { CrossCwdPanel } from "./CrossCwdPanel";
 import { CwdSelector } from "./CwdSelector";
+import { ProjectFilesGroup } from "./ProjectFilesGroup";
 
 // ---------------------------------------------------------------------------
 // Priority badge helpers
@@ -120,12 +120,6 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
   const lastCwd = useStore((s) => s.lastCwd);
   const [query, setQuery] = useState("");
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-
-  // NormalizeWizardModal opened on any drag-drop operation.
-  const [dndWizardEntry, setDndWizardEntry] = useState<{
-    sourceFile: FileEntry;
-    sourcePath: string;
-  } | null>(null);
 
   const home = useMemo(() => deriveHomeFromFiles(files), [files]);
 
@@ -239,17 +233,6 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     }
   }
 
-  // Universal drop handler — every drop opens NormalizeWizardModal.
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const sourceFileId = e.dataTransfer.getData("application/x-observatory-file-id");
-    if (!sourceFileId) return;
-    const sourceFile = files.find((f) => f.id === sourceFileId);
-    if (!sourceFile) return;
-    setDndWizardEntry({ sourceFile, sourcePath: sourceFile.path });
-  }, [files]);
-
   function registerRef(id: string) {
     return (el: HTMLDivElement | null) => {
       if (el) rowRefs.current.set(id, el);
@@ -257,12 +240,12 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
     };
   }
 
-  let hasAnyMatch = !lq;
-  if (lq) {
-    for (const g of groups) {
-      if (folderHasMatch(g.children)) { hasAnyMatch = true; break; }
-    }
-  }
+  // Build a path→FileEntry map for the unified tree.
+  const filesByPath = useMemo(() => {
+    const m = new Map<string, FileEntry>();
+    for (const f of files) m.set(f.path, f);
+    return m;
+  }, [files]);
 
   return (
     <aside className="explorer-pane" ref={ref as Ref<HTMLElement>}>
@@ -309,49 +292,36 @@ export const ExplorerPane = forwardRef<HTMLElement, Props>(function ExplorerPane
             activeCwd={lastCwd}
             home={home}
             onSelect={(fileId) => select(fileId)}
+            onRowContextMenu={onRowContextMenu}
           />
         )}
 
-        {!hasAnyMatch && (
-          <div className="explorer-empty">No files match</div>
-        )}
-        {groups.map((g) => (
-          <GroupRow
-            key={g.id}
-            group={g}
-            expanded={expanded}
-            toggle={toggleExpand}
-            selectedId={selectedId}
-            query={lq}
-            matchesSearch={matchesSearch}
-            folderHasMatch={folderHasMatch}
-            onRowClick={handleRowClick}
-            onRowDblClick={handleRowDblClick}
-            onRowMouseEnter={handleRowMouseEnter}
-            onRowMouseLeave={handleRowMouseLeave}
-            onRowContextMenu={handleRowContextMenu}
-            orphanIds={orphanIds}
-            registerRef={registerRef}
+        {/* Unified filesystem tree — replaces the old priority-tier groups. */}
+        {lastCwd && (
+          <ProjectFilesGroup
+            cwd={lastCwd}
+            filesByPath={filesByPath}
             priorityMap={priorityMap}
             statusMap={statusMap}
-            onZoneDrop={handleDrop}
+            query={lq}
+            selectedId={selectedId}
+            onSelectFile={(file) => {
+              select(file.id);
+            }}
+            onDblClickFile={(file) => {
+              select(file.id);
+              setEditorOpen(file.path, true);
+            }}
+            onHoverFile={(fileId) => onRowHover(fileId)}
+            onContextMenuFile={(e, file) => {
+              if (onRowContextMenu) {
+                const pluginManaged = isPluginCacheFile(file.path, home);
+                onRowContextMenu(e, file, pluginManaged);
+              }
+            }}
           />
-        ))}
+        )}
       </div>
-
-      {dndWizardEntry && (
-        <NormalizeWizardModal
-          entry={{
-            file_path: dndWizardEntry.sourcePath,
-            slot: "",
-            canonical_path: "",
-            reason: "outside_canonical_dir",
-          }}
-          forcedMode={"rule" as NormalizeMode}
-          targetCwd={lastCwd ?? undefined}
-          onClose={() => setDndWizardEntry(null)}
-        />
-      )}
     </aside>
   );
 });
