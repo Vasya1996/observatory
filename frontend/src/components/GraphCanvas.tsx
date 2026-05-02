@@ -48,14 +48,21 @@ const C = {
   iconBg: "#23232c",
 };
 
-// Step 2.5: kind-as-category colour (no more memory-by-frontmatter-type).
+// Kind-as-category colour. amber for files that auto-load into a session's
+// context (claude_md / rule / memory_index — MEMORY.md gets pulled in via the
+// @-import in ~/CLAUDE.md, so it counts as auto-loaded). Paper-cream for raw
+// memory files (knowledge/*.md) — they're a separate class of files that are
+// NOT auto-loaded, only referenced from MEMORY.md and read on demand. With
+// this split, the amber count on the map equals the count in the CrossCwdPanel
+// "Also loaded for this folder" list, while memory-as-a-class stays visually
+// distinct.
 function nodeColor(kind: NodeKind): string {
   switch (kind) {
     case "claude_md":
     case "rule":
+    case "memory_index":
       return C.amber;
     case "memory":
-    case "memory_index":
       return C.paper;
     default:
       return C.iconBg;
@@ -722,6 +729,9 @@ export function GraphCanvas({
         n.removeStyle();
 
         const s = statusMap?.get(n.id());
+        // Memory kind is a separate visual class (legend says 'NOT auto-loaded');
+        // keep kind-color regardless of per-cwd status so the map matches the legend 1:1.
+        const isMemory = n.data("kind") === "memory";
         if (s) {
           n.addClass(`status-${s}`);
           // Bypass background for every state explicitly. We can't trust
@@ -732,7 +742,9 @@ export function GraphCanvas({
           // even after status-loaded class is applied). Setting the
           // bypass explicitly for every state guarantees the bypass
           // matches the visible state.
-          if (s === "loaded") {
+          if (isMemory) {
+            n.style("background-color", n.data("color"));
+          } else if (s === "loaded") {
             n.style("background-color", n.data("color"));
           } else if (s === "conditional" || s === "skipped") {
             n.style("background-color", "#3a3a40");
@@ -742,8 +754,13 @@ export function GraphCanvas({
         } else {
           // null statusMap → no cwd selected → grey out every node so the
           // user doesn't see misleading kind-colors that imply "loaded".
-          n.addClass("no-cwd");
-          n.style("background-color", "#3a3a40");
+          if (isMemory) {
+            n.addClass("no-cwd");
+            n.style("background-color", n.data("color"));
+          } else {
+            n.addClass("no-cwd");
+            n.style("background-color", "#3a3a40");
+          }
         }
       });
     });

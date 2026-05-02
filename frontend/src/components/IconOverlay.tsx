@@ -89,9 +89,9 @@ export function IconOverlay({ cy }: Props) {
                 width: w,
                 height: w,
                 // Inset SVG inside the node circle so the glyph doesn't press
-                // against the rim. ~14% padding leaves a ~3-4px dark ring at
-                // ICON_SIZE=28 — SVG ends up ~72% of the circle.
-                padding: w * 0.14,
+                // against the rim. ~22% padding leaves a ~6px dark ring at
+                // ICON_SIZE=28 — SVG ends up ~56% of the circle diameter.
+                padding: w * 0.22,
                 boxSizing: "border-box",
                 transform: `translate(${x - w / 2}px, ${y - w / 2}px)`,
                 willChange: "transform",

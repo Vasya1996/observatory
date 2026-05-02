@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useStore } from "../state/store";
+import { ICON_PATH_BY_KIND } from "./nodeIcons";
 
-// Map legend overlay — top-right of .map-canvas-area (locked rule #60).
-// Collapsed = 28×28 circular "?" button. Expanded = 320px panel listing every
-// visual element with a swatch + description. State persisted via UiState.legend_open.
+// Map legend overlay — bottom-right of .map-canvas-area (locked rule #60).
+// Collapsed = small "MAP LEGEND ▴" pill. Expanded = 320px panel growing upward.
+// State persisted via UiState.legend_open.
 
 export function LegendOverlay() {
   const legendOpen = useStore((s) => s.legendOpen);
@@ -37,23 +38,22 @@ export function LegendOverlay() {
       ref={panelRef}
       style={{
         position: "absolute",
-        top: 12,
-        right: 12,
+        bottom: 16,
+        right: 16,
         zIndex: 35,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
       }}
     >
-      {!legendOpen ? (
-        <button
-          className="legend-toggle-btn"
-          onClick={() => setLegendOpen(true)}
-          title="Show map legend"
-          aria-label="Show map legend"
-          aria-expanded={false}
+      {/* Body — only rendered when open; grows upward because panel is bottom-anchored */}
+      {legendOpen && (
+        <div
+          className="legend-panel"
+          role="dialog"
+          aria-label="Map legend"
+          style={{ marginBottom: 4 }}
         >
-          ?
-        </button>
-      ) : (
-        <div className="legend-panel" role="dialog" aria-label="Map legend">
           <div className="legend-head">
             <span className="legend-head-label">Map Legend</span>
             <button
@@ -68,11 +68,11 @@ export function LegendOverlay() {
             <div className="legend-section-label">Nodes</div>
             <LegendRow
               swatch={<NodeSwatch color="var(--amber)" border="1.5px solid var(--paper)" />}
-              text="File loaded into the active cwd's session context (CLAUDE.md / rule / memory via @-import / auto-memory)"
+              text="Auto-loaded — CLAUDE.md / rule / MEMORY.md pulled into the active cwd's session context (matches the 'Also loaded for this folder' list 1:1)"
             />
             <LegendRow
-              swatch={<NodeSwatch color="var(--paper-warm, #e8e4d8)" border="1.5px solid var(--paper)" />}
-              text="Same as above, but for memory files and MEMORY.md (paper fill by convention)"
+              swatch={<NodeSwatch color="var(--paper-warm, #e8e4d8)" border="none" />}
+              text="Memory file (~/.claude/knowledge/*.md) — referenced from MEMORY.md, read on demand, NOT auto-loaded"
             />
             <LegendRow
               swatch={<NodeSwatch color="#3a3a40" border="1.5px dashed var(--paper-faint)" />}
@@ -87,27 +87,27 @@ export function LegendOverlay() {
               text="Orphan: outside every load chain, loaded only when opened manually"
             />
             <LegendRow
-              swatch={<IconNodeSwatch glyph={scrollPath} />}
+              swatch={<IconNodeSwatch glyph={ICON_PATH_BY_KIND.skill!} />}
               text="Skill (SKILL.md) — body loaded only when the skill is invoked"
             />
             <LegendRow
-              swatch={<IconNodeSwatch glyph={plugPath} />}
+              swatch={<IconNodeSwatch glyph={ICON_PATH_BY_KIND.plugin_manifest!} />}
               text="Plugin or plugin manifest"
             />
             <LegendRow
-              swatch={<IconNodeSwatch glyph={gearPath} />}
+              swatch={<IconNodeSwatch glyph={ICON_PATH_BY_KIND.settings!} />}
               text="settings.json or .mcp.json"
             />
             <LegendRow
-              swatch={<IconNodeSwatch glyph={codePath} />}
+              swatch={<IconNodeSwatch glyph={ICON_PATH_BY_KIND.script!} />}
               text="Hook script (sh/py/js)"
             />
             <LegendRow
-              swatch={<IconNodeSwatch glyph={lockPath} />}
+              swatch={<IconNodeSwatch glyph={ICON_PATH_BY_KIND.automemory!} />}
               text="Auto-memory written by Claude Code (~/.claude/projects/<project>/memory/)"
             />
             <LegendRow
-              swatch={<NodeSwatch color="#23232c" border="1px dashed var(--paper-faint)" label="▸" />}
+              swatch={<IconNodeSwatch glyph={ICON_PATH_BY_KIND.folder!} />}
               text="Folder node — collapsed group of same-kind files; hover to expand"
             />
             <div className="legend-section-label" style={{ marginTop: 10 }}>Edges</div>
@@ -125,7 +125,15 @@ export function LegendOverlay() {
             />
             <LegendRow
               swatch={<EdgeSwatch color="var(--amber)" dashed={true} />}
-              text="Incoming @-import / mention / hook (direction highlighted on hover)"
+              text="Incoming @-import (hovered, direction reversed)"
+            />
+            <LegendRow
+              swatch={<EdgeSwatch color="var(--teal)" dashed={true} />}
+              text="Incoming mention (hovered, direction reversed)"
+            />
+            <LegendRow
+              swatch={<EdgeSwatch color="var(--rose)" dashed={true} />}
+              text="Incoming hook (hovered, direction reversed)"
             />
             <LegendRow
               swatch={<CountBadgeSwatch />}
@@ -134,6 +142,17 @@ export function LegendOverlay() {
           </div>
         </div>
       )}
+
+      {/* Persistent pill header — always visible; caret flips on open/close */}
+      <button
+        className="legend-collapsed-head"
+        onClick={() => setLegendOpen(!legendOpen)}
+        aria-label={legendOpen ? "Collapse legend" : "Expand legend"}
+        aria-expanded={legendOpen}
+      >
+        <span>MAP LEGEND</span>
+        <span className="legend-caret">{legendOpen ? "▾" : "▴"}</span>
+      </button>
     </div>
   );
 }
@@ -242,19 +261,3 @@ function CountBadgeSwatch() {
     </svg>
   );
 }
-
-// SVG path data for icon glyphs (same as ICON_PATH_BY_KIND sources).
-const scrollPath =
-  '<path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 3H4.5C3.12 3 2 4.12 2 5.5"/><path d="M19 3a2 2 0 1 1 0 4H10"/><path d="M10 7v14"/>';
-
-const plugPath =
-  '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8H6a2 2 0 0 0-2 2v3a6 6 0 0 0 12 0V10a2 2 0 0 0-2-2Z"/>';
-
-const gearPath =
-  '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>';
-
-const codePath =
-  '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>';
-
-const lockPath =
-  '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>';

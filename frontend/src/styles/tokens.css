@@ -4662,37 +4662,42 @@ body {
 }
 
 /* ---------- Map legend overlay (locked rule #60) ----------
-   Top-right of .map-canvas-area. Collapsed = 28x28 circular ? button.
-   Expanded = 320px panel with internal scroll. Z-index 35 (above canvas, below modals). */
+   Bottom-right of .map-canvas-area. Collapsed = "MAP LEGEND ▴" pill.
+   Expanded = 320px panel growing upward from the pill.
+   Z-index 35 (above canvas, below modals). */
 
-.legend-toggle-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 1px solid var(--paper-faint);
-  background: rgba(17, 17, 22, 0.88);
-  color: var(--paper-dim);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
+/* Persistent pill shown in both collapsed and expanded states */
+.legend-collapsed-head {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(17, 17, 22, 0.88);
+  border: 1px solid var(--paper-faint);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
   backdrop-filter: blur(8px);
   transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
-  line-height: 1;
-  padding: 0;
+  white-space: nowrap;
 }
-.legend-toggle-btn:hover {
-  border-color: var(--paper);
-  color: var(--paper);
+.legend-collapsed-head:hover {
+  border-color: var(--paper-dim);
+  color: var(--paper-dim);
   background: rgba(17, 17, 22, 0.96);
+}
+.legend-caret {
+  font-size: 8px;
+  line-height: 1;
 }
 
 .legend-panel {
   width: 320px;
-  max-height: calc(100vh - 100px);
+  max-height: calc(100vh - 120px);
   background: var(--ink-2);
   border: 1px solid var(--paper-faint);
   border-radius: 10px;
