@@ -37,6 +37,7 @@ from .models import (
     GlobChange,
     ImportRef,
     IndexResponse,
+    LoadedFileCategory,
     LoadedFileEntry,
     LoadedFilesResponse,
     McpCard,
@@ -274,13 +275,42 @@ def get_cwds() -> list[CwdEntry]:
     ]
 
 
+# Directories and files that /api/cwd-tree always hides, regardless of whether
+# their name starts with a dot.  Keeps project scans clean of build artefacts,
+# VCS metadata, caches, and IDE state while still surfacing .claude/, .github/,
+# .gitignore, .env.example, etc. that are relevant to Claude Code context.
+# Project rule #7: «Exclude node_modules, .git, virtualenvs, caches, and
+# generated artifacts from project scans.»
+_CWD_TREE_BLACKLIST: frozenset[str] = frozenset({
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".cache",
+    ".tox",
+    "target",
+    ".idea",
+    ".vscode",
+    ".DS_Store",
+})
+
+
 def _has_visible_children(d: Path) -> bool:
-    """True if `d` has at least one non-hidden direct child. Hidden = name
-    starts with `.`. Used by /api/cwd-tree to draw expand chevrons without
-    the client having to fetch every dir to find out."""
+    """True if `d` has at least one child not in _CWD_TREE_BLACKLIST.
+
+    Used by /api/cwd-tree to draw expand chevrons without the client
+    having to fetch every dir to find out.
+    """
     try:
         for entry in d.iterdir():
-            if not entry.name.startswith("."):
+            if entry.name not in _CWD_TREE_BLACKLIST:
                 return True
         return False
     except OSError:
@@ -296,8 +326,9 @@ def get_cwd_tree(
 
     `cwd` — the user-selected project root (must exist).
     `path` — directory to list. Defaults to `cwd`. Must resolve inside `cwd`
-    (rejects path traversal). Hidden entries (name starts with `.`) are
-    omitted from the response — matching the desktop file-picker behaviour.
+    (rejects path traversal). Entries whose name is in `_CWD_TREE_BLACKLIST`
+    are omitted (.git, node_modules, caches, IDE dirs, etc.). Everything else
+    — including .claude/, .github/, .gitignore — is returned.
     The listing is intentionally one level deep: clients call this endpoint
     again with `path=<subdir>` when the user expands a folder.
     """
@@ -332,7 +363,7 @@ def get_cwd_tree(
 
     children: list[CwdTreeChild] = []
     for entry in raw_entries:
-        if entry.name.startswith("."):
+        if entry.name in _CWD_TREE_BLACKLIST:
             continue
         is_dir = entry.is_dir()
         children.append(
@@ -936,6 +967,89 @@ def post_migrate_preview(
 
         content_identity = "exact"
 
+    elif body.mode == "move-to-path":
+        # Filesystem move: copy src → dst_dir/<basename>, then delete src.
+        # Both paths must resolve inside active_cwd (symlinks resolved, no ..
+        # escape).  Returns 400 for boundary violations, destination conflicts,
+        # missing src, or non-directory dst_dir.
+        #
+        # References (frontmatter paths: and @-imports) that point to the old
+        # path are NOT automatically rewritten in this mode — the caller should
+        # display orphan_importers to alert the user.  Auto-rewrite of references
+        # is deferred: implement when DnD UX is finalised and user confirms they
+        # want reference updates bundled into the same diff.
+        if not body.dst_dir:
+            raise HTTPException(status_code=422, detail="dst_dir is required for move-to-path mode.")
+        if not body.active_cwd:
+            raise HTTPException(status_code=422, detail="active_cwd is required for move-to-path mode.")
+
+        active_cwd = Path(body.active_cwd).expanduser().resolve()
+        if not active_cwd.is_dir():
+            raise HTTPException(status_code=400, detail=f"active_cwd is not a directory: {body.active_cwd}")
+
+        dst_dir = Path(body.dst_dir).expanduser().resolve()
+
+        # Containment check — src must be inside active_cwd.
+        try:
+            source.relative_to(active_cwd)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"source is outside active_cwd: {body.source_path} not under {active_cwd}",
+            )
+
+        # Containment check — dst_dir must be inside active_cwd.
+        try:
+            dst_dir.relative_to(active_cwd)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"dst_dir is outside active_cwd: {body.dst_dir} not under {active_cwd}",
+            )
+
+        if not dst_dir.is_dir():
+            raise HTTPException(status_code=400, detail=f"dst_dir is not a directory: {body.dst_dir}")
+
+        basename = source.name
+        dest_file = dst_dir / basename
+
+        # Refuse to overwrite an existing file — no silent clobbers.
+        if dest_file.exists():
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "detail": "destination already exists",
+                    "existing_path": str(dest_file),
+                },
+            )
+
+        # Plan 1: create file at destination (copy of source content).
+        diff_create = "".join(
+            difflib.unified_diff(
+                [],
+                source_body.splitlines(keepends=True),
+                fromfile="/dev/null",
+                tofile=f"b/{config.collapse_home(dest_file)}",
+                n=3,
+            )
+        )
+        files_changed.append(MigrateFilePlan(
+            path=str(dest_file),
+            action="create",
+            new_content=source_body,
+            diff=diff_create,
+        ))
+
+        # Plan 2: delete original.
+        files_changed.append(MigrateFilePlan(
+            path=str(source),
+            action="delete",
+            new_content="",
+            diff="",
+        ))
+
+        content_identity = "exact"
+
     else:  # merge
         if body.target_dir_or_file:
             target_file = Path(body.target_dir_or_file).expanduser().resolve()
@@ -966,13 +1080,13 @@ def post_migrate_preview(
     # -------------------------------------------------------------------------
     # MEMORY.md auto-update: when a knowledge file is moved out of its original
     # directory, update the MEMORY.md line that points to it with the new path.
-    # Applies to rule mode (file moves to a new dir) and move-to-project mode.
+    # Applies to rule mode, move-to-project mode, and move-to-path mode.
     # add-paths / remove-paths / merge leave the file in place — no path change.
     # -------------------------------------------------------------------------
     _knowledge_dir = config.CLAUDE_DIR / "knowledge"
     _memory_index_path = _knowledge_dir / "MEMORY.md"
     if (
-        body.mode in ("rule", "move-to-project")
+        body.mode in ("rule", "move-to-project", "move-to-path")
         and _is_under_knowledge_dir(source, _knowledge_dir)
         and _memory_index_path.is_file()
     ):
@@ -1009,10 +1123,12 @@ def post_migrate_preview(
                     ))
 
     # Find @-import line in any importer and plan its removal.
-    # Skipped for add-paths / remove-paths (no move — the file stays in place)
-    # and for move-to-project (importer rewrite already baked into files_changed).
+    # Skipped for add-paths / remove-paths (no move — the file stays in place),
+    # move-to-project (importer rewrite already baked into files_changed), and
+    # move-to-path (importers are NOT rewritten — they end up in orphan_importers
+    # so the user is informed; auto-rewrite is deferred per the comment above).
     importers = find_importers(source, cache)
-    if body.mode not in ("add-paths", "remove-paths", "move-to-project"):
+    if body.mode not in ("add-paths", "remove-paths", "move-to-project", "move-to-path"):
         for imp in importers:
             imp_path = Path(imp.file_path)
             try:
@@ -1041,7 +1157,7 @@ def post_migrate_preview(
                 diff=imp_diff,
             ))
 
-    if body.delete_original and body.mode not in ("add-paths", "remove-paths", "move-to-project"):
+    if body.delete_original and body.mode not in ("add-paths", "remove-paths", "move-to-project", "move-to-path"):
         files_changed.append(MigrateFilePlan(
             path=str(source),
             action="delete",
@@ -1141,7 +1257,7 @@ def post_migrate_preview(
     # or they can use add-paths / remove-paths wizard modes afterwards.
     # -------------------------------------------------------------------------
     glob_changes: list[GlobChange] = []
-    if body.mode in ("rule", "move-to-project") and source_entry and source_entry.kind == "rule":
+    if body.mode in ("rule", "move-to-project", "move-to-path") and source_entry and source_entry.kind == "rule":
         dest_create = next((fc for fc in files_changed if fc.action == "create"), None)
         if dest_create is not None:
             glob_changes = _compute_glob_changes_for_move(
@@ -1999,11 +2115,8 @@ def _derive_skill_literal(skill_md_path: Path) -> str | None:
 # State file for globally disabled @-imports. Atomic writes keep it consistent.
 _DISABLED_IMPORTS_STATE = config.HOME / ".claude" / "observatory-disabled-imports.json"
 
-# Auto-memory slug directory prefix — files under this tree.
-_AUTO_MEMORY_PREFIX = str(config.CLAUDE_DIR / "projects")
 
-
-def _classify_loaded_path(path: Path) -> str:
+def _classify_loaded_path(path: Path) -> LoadedFileCategory:
     """Return the category string for a loaded file path.
 
     Categories (locked product spec):
@@ -2113,11 +2226,6 @@ def _save_disabled_imports_state(state: dict) -> None:
     )
 
 
-def _is_globally_disabled(target: Path) -> bool:
-    """True if the target path is in the disabled-imports state file."""
-    state = _load_disabled_imports_state()
-    return str(target) in state.get("imports", {})
-
 
 @router.get("/loaded-files", response_model=LoadedFilesResponse)
 def get_loaded_files(req: Request, cwd: str = Query(...)) -> LoadedFilesResponse:
@@ -2136,9 +2244,6 @@ def get_loaded_files(req: Request, cwd: str = Query(...)) -> LoadedFilesResponse
 
     files, edges, _ = _cache(req).snapshot()
     sim = simulate(cwd_path, files, edges)
-
-    files_map = {f.id: f for f in files}
-    files_by_path = {Path(f.path).resolve(): f for f in files}
 
     state = _load_disabled_imports_state()
     disabled_imports: set[str] = set(state.get("imports", {}).keys())
@@ -2292,8 +2397,11 @@ def _toggle_global_import(files: list, target: Path, action: str) -> ToggleLoade
             return ToggleLoadedFileResponse(success=True, scope="global")
         record = imports[target_str]
         containing = Path(record["containingFile"])
-        original_line = record["originalLine"]
+        original_line: str | None = record["originalLine"]
         line_index = record["lineIndex"]
+
+        if original_line is None:
+            return ToggleLoadedFileResponse(success=False, error="corrupt state: originalLine is missing")
 
         try:
             text = containing.read_text(encoding="utf-8")

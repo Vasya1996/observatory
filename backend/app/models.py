@@ -147,6 +147,11 @@ class TimelineStep(BaseModel):
     disabled: Optional[bool] = None
     disable_scope: Optional[Literal["cwd", "global"]] = None
     containing_file: Optional[str] = None
+    # Server-classified cross-cwd flag: True when this loaded step's absolute
+    # path is NOT under the active cwd. Computed server-side from absolute paths
+    # so the frontend never needs to expand ~ or compare paths itself.
+    # Default False so existing serialised responses stay compatible with old FE.
+    is_cross_cwd: bool = False
 
 
 class SimulatorStats(BaseModel):
@@ -360,7 +365,7 @@ class MigrateFilePlan(BaseModel):
 
 class MigratePreviewRequest(BaseModel):
     source_path: str
-    mode: Literal["rule", "merge", "add-paths", "remove-paths", "move-to-project"]
+    mode: Literal["rule", "merge", "add-paths", "remove-paths", "move-to-project", "move-to-path"]
     # For rule mode: directory to create the new rule in (default ~/.claude/rules/)
     target_dir_or_file: Optional[str] = None
     # Filename for the new rule file (rule mode only)
@@ -370,6 +375,12 @@ class MigratePreviewRequest(BaseModel):
     paths_globs: Optional[list[str]] = None
     # move-to-project mode: project cwd to move the rule into
     target_cwd: Optional[str] = None
+    # move-to-path mode: destination directory (inside active cwd) to move the
+    # file into.  The filename is preserved.  Both source and dst_dir must
+    # resolve inside `active_cwd` — the backend enforces this boundary.
+    dst_dir: Optional[str] = None
+    # active_cwd is required for move-to-path to enforce the containment check.
+    active_cwd: Optional[str] = None
 
 
 class GlobChange(BaseModel):
